@@ -1,0 +1,7 @@
+numpy>=1.21.0
+
+demucs>=4.0.0
+moviepy==1.0.3
+pydub>=0.25.1
+soundfile>=0.13.1
+transformers>=4.30.0 
