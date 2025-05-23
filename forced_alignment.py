@@ -5,8 +5,11 @@ import json
 import numpy as np
 from pathlib import Path
 import re
-import whisper
+import whisperx
 import gc
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 class LyricsAligner:
     def __init__(self, output_dir):
@@ -35,50 +38,48 @@ class LyricsAligner:
         
         audio_path = Path(audio_path)
         print(f"\nProcessing audio file: {audio_path}")
+
+        # Load audio and convert to mono
+        audio, sr = torchaudio.load(str(audio_path))
+        if audio.shape[0] > 1:
+            audio = torch.mean(audio, dim=0, keepdim=True)
         
-        # Load whisper model
-        print("\nLoading Whisper model...")
-        model = whisper.load_model("medium", self.device)
-        
-        # Transcribe with Whisper
-        print("\nTranscribing audio with Whisper...")
-        result = model.transcribe(str(audio_path), language="en")
-        
-        # Load alignment model
-        print("\nLoading alignment model...")
-        model_a, metadata = whisper.load_align_model(language_code="en", device=self.device)
-        
-        # Get word-level timestamps
-        print("\nPerforming forced alignment...")
-        result = whisper.align(result["segments"], model_a, metadata, str(audio_path), self.device)
-        
-        # Free up memory
-        del model
-        del model_a
-        gc.collect()
-        if self.device == "cuda":
-            torch.cuda.empty_cache()
+        # Resample to 16kHz if needed
+        if sr != 16000:
+            print(f"Resampling audio from {sr}Hz to 16kHz")
+            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
+            audio = resampler(audio)
+            sr = 16000
             
+        audio_nparray = audio.squeeze().numpy()
+        
+        # Use whisperx for transcription (for reference)
+        print("\nGenerating transcription...")
+        model = whisperx.load_model("medium", self.device)
+        transcription = model.transcribe(str(audio_path), language="en")
+        
+        # Save transcription data
+        transcription_path = self.output_dir / f"{audio_path.stem}_transcription.json"
+        print(f"\nSaving transcription data to: {transcription_path}")
+        with open(transcription_path, 'w', encoding='utf-8') as f:
+            json.dump(transcription, f, indent=2)
+        
+        model_a, metadata = whisperx.load_align_model(language_code=transcription["language"], device=self.device)
+        transcription = whisperx.align(
+            transcription["segments"], model_a, metadata, audio_nparray, self.device, return_char_alignments=True
+        )
+        
         # Process alignment results
         print("\nProcessing alignment results...")
-        word_timings = []
-        for segment in result["segments"]:
-            for word in segment["words"]:
-                word_timings.append({
-                    'text': word["word"],
-                    'begin': word["start"],
-                    'end': word["end"],
-                    'confidence': word.get("score", 1.0)  # Default confidence of 1.0 if not provided
-                })
-            
-        print(f"Generated {len(word_timings)} word timings")
-        if word_timings:
-            print("\nFirst few word timings:")
-            for word in word_timings[:3]:
-                print(f"Word: {word['text']}")
-                print(f"  Start: {word['begin']:.2f}s")
-                print(f"  End: {word['end']:.2f}s")
-                print(f"  Confidence: {word.get('confidence', 'N/A')}")
+        word_timings = transcription
+        # for segment in transcription["segments"]:
+        #     for word in segment["words"]:
+        #         word_timings.append({
+        #             'text': word["word"],
+        #             'begin': word["start"],
+        #             'end': word["end"],
+        #             'confidence': word.get("score", 1.0)  # Default confidence of 1.0 if not provided
+        #         })
             
         # Save alignment data
         output_path = self.output_dir / f"{audio_path.stem}_alignment.json"
@@ -165,7 +166,7 @@ if __name__ == "__main__":
     
     # Process files
     print(f"\nStarting alignment process...")
-    alignment_path = aligner.forced_align_with_lyrics(args.audio, args.lyrics)
+    alignment_path = aligner.align(args.audio, args.lyrics)
     
     # Load and print alignment results
     print("\nLoading final alignment results...")
