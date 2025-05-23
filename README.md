@@ -40,3 +40,7 @@ The program will generate:
 
 
 Download torch and torchaudio with the website (pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118) for gpu
+
+Use this env variable to make sure whisperx can access stuff export LD_LIBRARY_PATH=/{absolute path to venv}/lib/python3.XX/site-packages/nvidia/cudnn/lib/
+
+Needs imagemagick and ffmpeg

@@ -1,7 +1,7 @@
 whisperx
 numpy
 demucs
-moviepy
+moviepy==1.0.3
 pydub
 soundfile
 transformers

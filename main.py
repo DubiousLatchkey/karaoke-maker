@@ -38,7 +38,7 @@ def run_test_mode(input_dir, output_dir):
     print(f"Aligning lyrics with audio...")
     alignment_path = output_path / 'song_vocals_alignment.json'
     alignment_path.parent.mkdir(parents=True, exist_ok=True)
-    alignment_data = aligner.align(str(audio_path), str(lyrics_path))
+    alignment_data = aligner.run_asr(str(audio_path), str(lyrics_path))
     
     # Generate test video
     print(f"Generating test video...")
@@ -67,7 +67,7 @@ def run_full_process(input_dir, output_dir):
         vocal_path, instrumental_path = separator.separate(str(audio_file))
         
         print("Aligning lyrics with audio...")
-        alignment_data = aligner.align(vocal_path, str(lyrics_file))
+        alignment_data = aligner.run_asr(vocal_path, str(lyrics_file))
         
         print("Generating karaoke video...")
         output_name = audio_file.stem
