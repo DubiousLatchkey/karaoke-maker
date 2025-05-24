@@ -238,13 +238,32 @@ class LyricsAligner:
         # Read lyrics
         with open(lyrics_path, 'r', encoding='utf-8') as f:
             lyrics = f.read()
-
+            
         lyrics = lyrics.replace("’", "'").replace("“", '"').replace("”", '"')
+        
+        # Detect line breaks before tokenizing
+        print("\nDetecting line breaks in lyrics...")
+        lines = lyrics.split('\n')
+        print(f"Found {len(lines)} lines in lyrics")
+        
+        # Track which word indices are at the end of lines
+        line_end_indices = set()
+        word_count = 0
+        
+        for line_idx, line in enumerate(lines):
+            line_tokens = re.findall(r"\b[a-z']+\b", line.lower())
+            if line_tokens:  # Skip empty lines
+                # The last word of this line will be at index (word_count + len(line_tokens) - 1)
+                line_end_idx = word_count + len(line_tokens) - 1
+                line_end_indices.add(line_end_idx)
+                print(f"Line {line_idx + 1}: '{line.strip()[:20]}...' ends at word index {line_end_idx}")
+                word_count += len(line_tokens)
         
         # Tokenize lyrics into words
         lyrics_tokens = re.findall(r"\b[a-z']+\b", lyrics.lower())
         print(f"Lyrics tokens preview: {lyrics_tokens[:10]}")
         print(f"Lyrics tokens: {len(lyrics_tokens)}")
+        print(f"Line breaks at word indices: {sorted(line_end_indices)}")
         
         # Extract ASR tokens and their timing information
         asr_tokens = []
@@ -286,6 +305,11 @@ class LyricsAligner:
                 "text": lyrics_token,
                 "index": lyrics_idx
             }
+            
+            # Mark if this word is at the end of a line
+            if lyrics_idx in line_end_indices:
+                timing_entry["line_end"] = True
+                print(f"Marking word '{lyrics_token}' (index {lyrics_idx}) as line end")
             
             # If we found a matching alignment
             if matching_alignment and matching_alignment:
