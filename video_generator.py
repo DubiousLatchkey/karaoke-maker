@@ -4,8 +4,47 @@ import json
 from pathlib import Path
 
 class KaraokeVideoGenerator:
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, resolution="1280x720"):
         self.output_dir = output_dir
+        
+        # Parse resolution and ensure 16:9 aspect ratio
+        if isinstance(resolution, str):
+            if 'x' in resolution:
+                width, height = map(int, resolution.split('x'))
+            else:
+                # If just height given, calculate 16:9 width
+                height = int(resolution)
+                width = int(height * 16 / 9)
+        else:
+            # Assume it's height as integer
+            height = int(resolution)
+            width = int(height * 16 / 9)
+        
+        # Ensure 16:9 aspect ratio
+        if width / height != 16 / 9:
+            # Adjust to closest 16:9
+            if width / height > 16 / 9:
+                width = int(height * 16 / 9)
+            else:
+                height = int(width * 9 / 16)
+        
+        self.resolution = (width, height)
+        print(f"Video resolution set to: {width}x{height}")
+        
+        # Base resolution for scaling (1280x720)
+        self.base_resolution = (1280, 720)
+        self.scale_factor = height / 720  # Scale based on height
+        
+        # Scaled dimensions
+        self.font_size = int(50 * self.scale_factor)
+        self.text_width = int(1100 * self.scale_factor)
+        self.stroke_width = max(1, int(1 * self.scale_factor))
+        self.y_top = int(200 * self.scale_factor)
+        self.y_bottom = int(520 * self.scale_factor)
+        
+        print(f"Scaling factor: {self.scale_factor:.2f}")
+        print(f"Font size: {self.font_size}, Text width: {self.text_width}")
+        print(f"Y positions: top={self.y_top}, bottom={self.y_bottom}")
         
     def generate(self, instrumental_path, alignment_path, output_name):
         """
@@ -37,8 +76,8 @@ class KaraokeVideoGenerator:
         lines = self._group_words_into_lines(alignment_data)
         print(f"Grouped into {len(lines)} karaoke lines")
         
-        # Create background
-        background = ColorClip(size=(1280, 720), color=(0, 0, 0), duration=duration)
+        # Create background with scaled resolution
+        background = ColorClip(size=self.resolution, color=(0, 0, 0), duration=duration)
         
         # Create karaoke line clips
         line_clips = []
@@ -46,9 +85,13 @@ class KaraokeVideoGenerator:
             is_top = (i % 2 == 0)  # Alternate between top and bottom
             line_clip = self._create_karaoke_line_clip(line, is_top, duration)
             if line_clip:
-                line_clips.append(line_clip)
+                # Position the clip based on whether it should be top or bottom
+                y_position = self.y_top if is_top else self.y_bottom
+                positioned_clip = line_clip.set_position(('center', y_position))
+                line_clips.append(positioned_clip)
+                print(f"  Positioned line {i+1} at y={y_position}")
         
-        print(f"Created {len(line_clips)} line clips")
+        print(f"Created {len(line_clips)} positioned line clips")
         
         # Combine all clips
         print("Compositing video...")
@@ -61,15 +104,18 @@ class KaraokeVideoGenerator:
         output_path = os.path.join(self.output_dir, f"{output_name}.mp4")
         print(f"Writing video to: {output_path}")
         
+        final_video.save_frame("frame.png", t=26)
+
         final_video.write_videofile(
             output_path,
             fps=24,
             codec='libx264',
             audio_codec='aac',
             verbose=False,
-            logger=None
+            logger="bar"
         )
         
+
         # Clean up
         audio.close()
         final_video.close()
@@ -131,9 +177,113 @@ class KaraokeVideoGenerator:
         
         return lines
     
+    def _preprocess_line_text(self, line_text, max_chars_per_line=40):
+        """
+        Preprocess line text to add newlines at appropriate places for better display
+        
+        Args:
+            line_text: Original line text
+            max_chars_per_line: Maximum characters per line before breaking
+            
+        Returns:
+            Text with newlines inserted at good break points
+        """
+        words = line_text.split()
+        if not words:
+            return line_text
+            
+        lines = []
+        current_line = []
+        current_length = 0
+        
+        for word in words:
+            # Check if adding this word would exceed the line limit
+            word_length = len(word)
+            space_length = 1 if current_line else 0  # Space before word (except first word)
+            
+            if current_length + space_length + word_length <= max_chars_per_line:
+                # Word fits on current line
+                current_line.append(word)
+                current_length += space_length + word_length
+            else:
+                # Word doesn't fit, start new line
+                if current_line:  # Only add line if it has content
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+                current_length = word_length
+        
+        # Add the last line if it has content
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        return '\n'.join(lines)
+    
+    def _create_mask_text_with_newlines(self, preprocessed_full_text, revealed_words):
+        """
+        Create mask text that maintains newline structure while revealing only certain words
+        
+        Args:
+            preprocessed_full_text: Full text with newlines already inserted
+            revealed_words: List of words that should be revealed
+            
+        Returns:
+            Mask text with revealed words and spaces for unrevealed parts, maintaining newlines
+        """
+        if not revealed_words:
+            # Return text with all words replaced by spaces, maintaining structure
+            result = ""
+            for char in preprocessed_full_text:
+                if char == '\n':
+                    result += '\n'
+                else:
+                    result += ' '
+            return result
+        
+        # Create the revealed text string
+        revealed_text = ' '.join(revealed_words)
+        
+        # Split both texts into words while preserving position information
+        full_words = []
+        current_word = ""
+        word_positions = []  # (start_pos, end_pos, word)
+        pos = 0
+        
+        # Parse the full text to get word positions
+        for i, char in enumerate(preprocessed_full_text):
+            if char.isspace() or char == '\n':
+                if current_word:
+                    word_positions.append((pos, pos + len(current_word), current_word.upper()))
+                    current_word = ""
+                    pos = i + 1
+                elif char == '\n':
+                    # Keep track of newlines
+                    pass
+            else:
+                current_word += char
+        
+        # Don't forget the last word if text doesn't end with space
+        if current_word:
+            word_positions.append((pos, pos + len(current_word), current_word.upper()))
+        
+        # Create mask by revealing words progressively
+        mask_chars = list(preprocessed_full_text)
+        revealed_word_count = 0
+        
+        for start_pos, end_pos, word in word_positions:
+            if revealed_word_count < len(revealed_words):
+                # This word should be revealed
+                revealed_word_count += 1
+            else:
+                # This word should be hidden (replaced with spaces)
+                for i in range(len(word)):
+                    if start_pos + i < len(mask_chars):
+                        mask_chars[start_pos + i] = ' '
+        
+        return ''.join(mask_chars)
+
     def _create_karaoke_line_clip(self, line, is_top, total_duration):
         """
-        Create a simple line clip for testing
+        Create a karaoke line clip with progressive word highlighting using individual masked clips
         
         Args:
             line: Line dictionary with words and timing
@@ -141,44 +291,98 @@ class KaraokeVideoGenerator:
             total_duration: Total video duration
             
         Returns:
-            VideoClip for this line
+            VideoClip for this line with karaoke highlighting effect
         """
         try:
-            # Calculate positions
-            y_position = 200 if is_top else 520  # Top or bottom half
-            
-            print(f"Creating simple line clip: '{line['text'][:50]}...' at y={y_position}")
+            print(f"Creating karaoke line clip: '{line['text'][:50]}...'")
             print(f"  Line timing: {line['start']:.2f}s - {line['end']:.2f}s")
+            print(f"  Words: {len(line['words'])}")
             
-            # Create simple text clip for the entire line
-            line_clip = TextClip(
-                line['text'].upper(),
-                fontsize=50,
+            # Preprocess the line text with newlines
+            line_text = line['text'].upper()
+            preprocessed_text = self._preprocess_line_text(line_text)
+            print(f"  Preprocessed text:\n{repr(preprocessed_text)}")
+            
+            # Set timing for the line
+            start_time = max(0, line['start'] - 0.5)
+            end_time = line['end'] + 0.5
+            duration = end_time - start_time
+        
+            # Start with the base white clip
+            clips = []
+            
+            # Create progressive yellow clips for each word
+            words_so_far = []
+            
+            for i, word in enumerate(line['words']):
+                # Skip words without valid timing
+                if word.get('begin') is None or word.get('end') is None:
+                    continue
+                
+                # Add this word to the list of revealed words
+                words_so_far.append(word['text'].upper())
+                
+                # Calculate timing for this word
+                word_start = max(start_time, float(word['begin']))
+                word_duration = end_time - word_start
+                
+                if word_duration <= 0:
+                    continue
+                
+                # Create yellow text of the whole preprocessed line
+                yellow_text = TextClip(
+                    preprocessed_text,
+                    fontsize=self.font_size,
+                    color='yellow',
+                    font='DejaVu-Sans-Mono',
+                    stroke_color='black',
+                    stroke_width=self.stroke_width
+                ).set_start(word_start).set_duration(word_duration)
+                
+                # Create mask text with proper newline handling
+                mask_text = self._create_mask_text_with_newlines(preprocessed_text, words_so_far)
+                
+                word_mask = TextClip(
+                    mask_text,
+                    fontsize=self.font_size,
+                    color='white',  # White reveals, black hides
+                    font='DejaVu-Sans-Mono',
+                    bg_color='black'
+                ).set_start(word_start).set_duration(word_duration)
+                
+                # Convert to mask
+                word_mask = word_mask.to_mask()
+                
+                # Apply mask to yellow text
+                masked_yellow = yellow_text.set_mask(word_mask)
+                
+                # Add to clips list
+                clips.append(masked_yellow)
+            
+            # Create base white text of the whole preprocessed line (always visible)
+            base_white = TextClip(
+                preprocessed_text,
+                fontsize=self.font_size,
                 color='white',
                 font='DejaVu-Sans-Mono',
                 stroke_color='black',
-                stroke_width=1,
-                method='caption',
-                size=(1100, None)  # Width limit for wrapping, auto height
-            ).set_position(('center', y_position))
+                stroke_width=self.stroke_width
+            ).set_start(start_time).set_duration(duration).fadein(0.5).fadeout(0.5)
+
+            # If no valid word clips were created, return just the white text
+            if len(clips) == 0:
+                print("  No valid word clips created, using simple white display")
+                return base_white
             
-            # Set timing with some padding
-            start_time = max(0, line['start'] - 0.5)
-            end_time = line['end'] + 0.5
+            # Combine all clips into one composite clip
+            final_clip = CompositeVideoClip([base_white] + clips)
             
-            line_clip = (line_clip
-                        .set_start(start_time)
-                        .set_end(end_time)
-                        .set_duration(end_time - start_time)
-                        .fadein(0.5)
-                        .fadeout(0.5))
+            print(f"  Created karaoke clip with {len(clips)} progressive yellow clips")
             
-            print(f"  Created clip: {start_time:.2f}s - {end_time:.2f}s")
-            
-            return line_clip
+            return final_clip
             
         except Exception as e:
-            print(f"Error creating line clip for '{line['text']}': {e}")
+            print(f"Error creating karaoke line clip for '{line['text']}': {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -224,8 +428,8 @@ class KaraokeVideoGenerator:
         duration = audio.duration
         print(f"Audio duration: {duration:.2f} seconds")
         
-        # Create black background
-        background = ColorClip(size=(1280, 720), color=(0, 0, 0), duration=duration)
+        # Create black background with scaled resolution
+        background = ColorClip(size=self.resolution, color=(0, 0, 0), duration=duration)
         
         # Create text clips for each word with valid timing
         text_clips = []
@@ -245,14 +449,14 @@ class KaraokeVideoGenerator:
                     print(f"Skipping word '{word['text']}' with invalid timing: {start_time:.2f} - {end_time:.2f}")
                     continue
                 
-                # Create text clip for this word
+                # Create text clip for this word with scaled font size
                 text_clip = (TextClip(
                     word['text'].upper(),  # Convert to uppercase for better visibility
-                    fontsize=60,  # Keep larger for test mode
+                    fontsize=int(60 * self.scale_factor),  # Scale test mode font size
                     color='white',
                     font='DejaVu-Sans-Mono',  # Changed to monospaced font
                     stroke_color='black',
-                    stroke_width=1  # Reduced stroke width
+                    stroke_width=self.stroke_width
                 )
                 .set_start(start_time)
                 .set_end(end_time)
@@ -305,6 +509,8 @@ if __name__ == "__main__":
     parser.add_argument('--alignment', required=True, help='Path to lyrics alignment JSON file from Viterbi')
     parser.add_argument('--output_dir', help='Directory for output files (defaults to alignment file directory)')
     parser.add_argument('--output_name', help='Name for output video file (defaults to alignment filename)')
+    parser.add_argument('--resolution', default='1280x720', 
+                        help='Video resolution. Options: "WIDTHxHEIGHT" (e.g. "1920x1080") or just "HEIGHT" (e.g. "1080" for 1920x1080). Always maintains 16:9 aspect ratio (default: 1280x720)')
     parser.add_argument('--mode', choices=['test', 'karaoke'], default='karaoke',
                         help='Generation mode: "test" for simple word-by-word, "karaoke" for full karaoke style (default: karaoke)')
     args = parser.parse_args()
@@ -320,12 +526,13 @@ if __name__ == "__main__":
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Initialize video generator
-    video_gen = KaraokeVideoGenerator(args.output_dir)
+    # Initialize video generator with specified resolution
+    video_gen = KaraokeVideoGenerator(args.output_dir, resolution=args.resolution)
     
     print(f"Generating {args.mode} video...")
     print(f"Audio: {args.audio}")
     print(f"Alignment: {args.alignment}")
+    print(f"Resolution: {args.resolution} -> {video_gen.resolution[0]}x{video_gen.resolution[1]}")
     print(f"Output directory: {args.output_dir}")
     print(f"Output name: {args.output_name}")
     print("-" * 50)
@@ -342,7 +549,7 @@ if __name__ == "__main__":
         print(f"\nWorkflow summary:")
         print(f"1. ASR: python forced_alignment.py --mode asr --input song.mp3")
         print(f"2. Viterbi: python forced_alignment.py --mode viterbi --input song_alignment.json --lyrics lyrics.txt")
-        print(f"3. Video: python video_generator.py --audio instrumental.mp3 --alignment song_lyrics_alignment.json --mode karaoke")
+        print(f"3. Video: python video_generator.py --audio instrumental.mp3 --alignment song_lyrics_alignment.json --mode karaoke --resolution 1080")
     except Exception as e:
         print(f"✗ Error generating video: {e}")
         import traceback
