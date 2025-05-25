@@ -193,7 +193,7 @@ class LyricsAligner:
         
         # Use whisperx for transcription (for reference)
         print("\nGenerating transcription...")
-        model = whisperx.load_model("medium", self.device)
+        model = whisperx.load_model("large", self.device)
         transcription = model.transcribe(str(audio_path), language="en")
         
         # Save transcription data
@@ -215,6 +215,14 @@ class LyricsAligner:
         with open(alignment_path, 'w', encoding='utf-8') as f:
             json.dump(aligned_result, f, indent=2)
             
+
+        # Clear memory
+        del model
+        del model_a
+        del metadata
+        del aligned_result
+        gc.collect()
+
         return str(alignment_path)
 
 
@@ -251,16 +259,17 @@ class LyricsAligner:
         word_count = 0
         
         for line_idx, line in enumerate(lines):
-            line_tokens = re.findall(r"\b[a-z']+\b", line.lower())
+            line_tokens = re.findall(r"[a-z'\-]+", line.lower())
+            print(line_idx, "|", line_tokens)
             if line_tokens:  # Skip empty lines
                 # The last word of this line will be at index (word_count + len(line_tokens) - 1)
                 line_end_idx = word_count + len(line_tokens) - 1
                 line_end_indices.add(line_end_idx)
-                print(f"Line {line_idx + 1}: '{line.strip()[:20]}...' ends at word index {line_end_idx}")
+                #print(f"Line {line_idx + 1}: '{line.strip()[:20]}...' ends at word index {line_end_idx}")
                 word_count += len(line_tokens)
         
         # Tokenize lyrics into words
-        lyrics_tokens = re.findall(r"\b[a-z']+\b", lyrics.lower())
+        lyrics_tokens = re.findall(r"[a-z'\-]+", lyrics.lower())
         print(f"Lyrics tokens preview: {lyrics_tokens[:10]}")
         print(f"Lyrics tokens: {len(lyrics_tokens)}")
         print(f"Line breaks at word indices: {sorted(line_end_indices)}")

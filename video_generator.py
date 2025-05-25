@@ -1,7 +1,8 @@
-from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips, VideoClip
 import os
 import json
 from pathlib import Path
+import numpy as np
 
 class KaraokeVideoGenerator:
     def __init__(self, output_dir, resolution="1280x720"):
@@ -46,7 +47,7 @@ class KaraokeVideoGenerator:
         print(f"Font size: {self.font_size}, Text width: {self.text_width}")
         print(f"Y positions: top={self.y_top}, bottom={self.y_bottom}")
         
-    def generate(self, instrumental_path, alignment_path, output_name):
+    def generate(self, instrumental_path, alignment_path, output_name, use_wipe=True):
         """
         Generate karaoke video with timed lyrics in karaoke style
         
@@ -54,6 +55,7 @@ class KaraokeVideoGenerator:
             instrumental_path (str): Path to the instrumental audio
             alignment_path (str): Path to the alignment JSON file with line_end markers
             output_name (str): Name for the output video file
+            use_wipe (bool): Whether to use wipe transitions instead of progressive highlighting
             
         Returns:
             str: Path to the generated video file
@@ -83,18 +85,28 @@ class KaraokeVideoGenerator:
         line_clips = []
         for i, line in enumerate(lines):
             is_top = (i % 2 == 0)  # Alternate between top and bottom
-            line_clip = self._create_karaoke_line_clip(line, is_top, duration)
+            
+            # Choose which line clip function to use based on use_wipe parameter
+            if use_wipe:
+                line_clip = self._create_karaoke_line_clip_wipe(line, is_top, duration)
+                clip_type = "wipe"
+            else:
+                line_clip = self._create_karaoke_line_clip(line, is_top, duration)
+                clip_type = "karaoke"
+                
             if line_clip:
                 # Position the clip based on whether it should be top or bottom
                 y_position = self.y_top if is_top else self.y_bottom
                 positioned_clip = line_clip.set_position(('center', y_position))
                 line_clips.append(positioned_clip)
-                print(f"  Positioned line {i+1} at y={y_position}")
+                print(f"  Positioned {clip_type} line {i+1} at y={y_position}")
+
         
         print(f"Created {len(line_clips)} positioned line clips")
         
         # Combine all clips
-        print("Compositing video...")
+        mode_name = "wipe" if use_wipe else "karaoke"
+        print(f"Compositing {mode_name} video...")
         final_video = CompositeVideoClip([background] + line_clips)
         
         # Add audio
@@ -102,10 +114,8 @@ class KaraokeVideoGenerator:
         
         # Write output file
         output_path = os.path.join(self.output_dir, f"{output_name}.mp4")
-        print(f"Writing video to: {output_path}")
+        print(f"Writing {mode_name} video to: {output_path}")
         
-        final_video.save_frame("frame.png", t=26)
-
         final_video.write_videofile(
             output_path,
             fps=24,
@@ -120,7 +130,7 @@ class KaraokeVideoGenerator:
         audio.close()
         final_video.close()
         
-        print(f"Karaoke video generation complete!")
+        print(f"Karaoke {mode_name} video generation complete!")
         return output_path
     
     def _group_words_into_lines(self, alignment_data):
@@ -281,6 +291,60 @@ class KaraokeVideoGenerator:
         
         return ''.join(mask_chars)
 
+    def _create_word_spacing_for_wipe(self, preprocessed_text, target_word, word_index=0):
+        """
+        Create padded text with spaces where only the target word is revealed
+        
+        Args:
+            preprocessed_text: Full text with newlines already inserted
+            target_word: The word that should be revealed (others replaced with spaces)
+            word_index: Which occurrence of target_word to reveal (0-based index)
+            
+        Returns:
+            Text with only target word visible and other words replaced by spaces, maintaining newlines
+        """
+        word_spacing = ' ' * len(preprocessed_text)  # Start with all spaces
+        # Find the word position and replace just that word
+        current_word = ""
+        word_positions = []  # (start_pos, end_pos, word)
+        pos = 0
+        
+        # Parse the text to get word positions
+        for i, char in enumerate(preprocessed_text):
+            if char.isspace() or char == '\n':
+                if current_word:
+                    word_positions.append((pos, pos + len(current_word), current_word.upper()))
+                    current_word = ""
+                    pos = i + 1
+                if char == '\n':
+                    # Preserve newlines in the spacing
+                    word_spacing = word_spacing[:i] + '\n' + word_spacing[i+1:]
+            else:
+                current_word += char
+        
+        # Handle last word
+        if current_word:
+            word_positions.append((pos, pos + len(current_word), current_word.upper()))
+        
+        # Find all occurrences of the target word and replace only the specified one
+        target_occurrences = []
+        for start_pos, end_pos, word in word_positions:
+            if word == target_word:
+                target_occurrences.append((start_pos, end_pos, word))
+        
+        # Replace the target word occurrence at the specified index
+        if word_index < len(target_occurrences):
+            start_pos, end_pos, word = target_occurrences[word_index]
+            word_spacing = word_spacing[:start_pos] + target_word + word_spacing[end_pos:]
+        else:
+            # If word_index is out of range, fall back to first occurrence
+            if target_occurrences:
+                start_pos, end_pos, word = target_occurrences[0]
+                word_spacing = word_spacing[:start_pos] + target_word + word_spacing[end_pos:]
+
+        
+        return word_spacing
+
     def _create_karaoke_line_clip(self, line, is_top, total_duration):
         """
         Create a karaoke line clip with progressive word highlighting using individual masked clips
@@ -304,8 +368,8 @@ class KaraokeVideoGenerator:
             print(f"  Preprocessed text:\n{repr(preprocessed_text)}")
             
             # Set timing for the line
-            start_time = max(0, line['start'] - 0.5)
-            end_time = line['end'] + 0.5
+            start_time = max(0, line['start'] - 0.6)
+            end_time = line['end'] + 0.4
             duration = end_time - start_time
         
             # Start with the base white clip
@@ -335,7 +399,7 @@ class KaraokeVideoGenerator:
                     fontsize=self.font_size,
                     color='yellow',
                     font='DejaVu-Sans-Mono',
-                    stroke_color='black',
+                    stroke_color='yellow',
                     stroke_width=self.stroke_width
                 ).set_start(word_start).set_duration(word_duration)
                 
@@ -347,7 +411,9 @@ class KaraokeVideoGenerator:
                     fontsize=self.font_size,
                     color='white',  # White reveals, black hides
                     font='DejaVu-Sans-Mono',
-                    bg_color='black'
+                    bg_color='black',
+                    stroke_color='white',
+                    stroke_width=self.stroke_width
                 ).set_start(word_start).set_duration(word_duration)
                 
                 # Convert to mask
@@ -365,9 +431,9 @@ class KaraokeVideoGenerator:
                 fontsize=self.font_size,
                 color='white',
                 font='DejaVu-Sans-Mono',
-                stroke_color='black',
+                stroke_color='white',
                 stroke_width=self.stroke_width
-            ).set_start(start_time).set_duration(duration).fadein(0.5).fadeout(0.5)
+            ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4)
 
             # If no valid word clips were created, return just the white text
             if len(clips) == 0:
@@ -383,6 +449,142 @@ class KaraokeVideoGenerator:
             
         except Exception as e:
             print(f"Error creating karaoke line clip for '{line['text']}': {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _create_karaoke_line_clip_wipe(self, line, is_top, total_duration):
+        """
+        Create a karaoke line clip with wipe transition effects for each word
+        
+        Args:
+            line: Line dictionary with words and timing
+            is_top: Boolean indicating if line should be in top half
+            total_duration: Total video duration
+            
+        Returns:
+            VideoClip for this line with karaoke wipe highlighting effect
+        """
+        try:
+            print(f"Creating karaoke line clip (wipe): '{line['text'][:50]}...'")
+            print(f"  Line timing: {line['start']:.2f}s - {line['end']:.2f}s")
+            print(f"  Words: {len(line['words'])}")
+            
+            # Preprocess the line text with newlines
+            line_text = line['text'].upper()
+            preprocessed_text = self._preprocess_line_text(line_text)
+            print(f"  Preprocessed text:\n{repr(preprocessed_text)}")
+            
+            # Set timing for the line
+            start_time = max(0, line['start'] - 0.6)
+            end_time = line['end'] + 0.4
+            duration = end_time - start_time
+            
+            # Filter out words without valid timing
+            valid_words = []
+            for word in line['words']:
+                if word.get('begin') is not None and word.get('end') is not None:
+                    valid_words.append(word)
+            
+            if not valid_words:
+                print("  No valid words found, creating simple white text")
+                return TextClip(
+                    preprocessed_text,
+                    fontsize=self.font_size,
+                    color='white',
+                    font='DejaVu-Sans-Mono',
+                    stroke_color='white',
+                    stroke_width=self.stroke_width
+                ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4)
+            
+            # Create base white text (always visible)
+            base_white = TextClip(
+                preprocessed_text,
+                fontsize=self.font_size,
+                color='white',
+                font='DejaVu-Sans-Mono',
+                stroke_color='white',
+                stroke_width=self.stroke_width
+            ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4).set_position(('center', 'center'))
+            
+            # Create yellow text for the complete line
+            yellow_text = TextClip(
+                preprocessed_text,
+                fontsize=self.font_size,
+                color='yellow',
+                font='DejaVu-Sans-Mono',
+                stroke_color='yellow',
+                stroke_width=self.stroke_width
+            ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4).set_position(('center', 'center'))
+            
+            print(f"  Creating wipe effects for {len(valid_words)} words...")
+            
+            # Create Wipe instances for each word
+            word_wipes = []
+            word_occurrence_count = {}  # Track how many times we've seen each word
+            
+            for word in valid_words:
+                word_text = word['text'].upper()
+                
+                # Track which occurrence of this word we're processing
+                if word_text not in word_occurrence_count:
+                    word_occurrence_count[word_text] = 0
+                else:
+                    word_occurrence_count[word_text] += 1
+                
+                current_word_index = word_occurrence_count[word_text]
+                
+                # Create padded text where other words are replaced with spaces
+                # Use the same logic as the existing mask function to handle newlines properly
+                # Create padded text with spaces before and after this word
+                word_spacing = self._create_word_spacing_for_wipe(preprocessed_text, word_text, current_word_index)
+                
+                #print(f"    Created spaced word '{word_spacing}'")
+                
+                # Create Wipe instance
+                wipe = Wipe(word_text, word_spacing, self.resolution, self.font_size, self.stroke_width)
+                word_wipes.append((wipe, word))
+            
+            # Create masked yellow clips for each word
+            masked_clips = []
+            for wipe, word in word_wipes:
+                begin_time = float(word['begin'])
+                end_time = float(word['end'])
+                this_duration = end_time - begin_time
+                
+                # # Create mask clip for this word
+                # def make_mask_frame(t, w=wipe, bt=begin_time, dur=this_duration):
+                #     return w.create_wipe_mask(t, bt, dur)
+                
+                def make_mask_frame_local(t, w=wipe, dur=this_duration):
+                    return w.create_wipe_mask_local(t, dur)
+                
+                mask_clip = VideoClip(make_mask_frame_local, duration=this_duration)
+                final_mask = mask_clip.to_mask()
+                
+                # Apply mask to yellow text
+                relative_start_time = begin_time - start_time
+                masked_yellow = yellow_text.set_mask(final_mask).set_start(begin_time).set_duration(duration - relative_start_time).fadeout(0.4)
+                masked_clips.append(masked_yellow)
+
+                # Write masked yellow clip to file for debugging
+                # single_clip = CompositeVideoClip([base_white, masked_yellow], size=self.resolution)
+                # single_clip.fps = 24
+                # single_clip.write_videofile(f"masked_yellow_{word['text']}.mp4", verbose=False, logger="bar")
+                # single_clip.close()
+                
+                print(f"    Created wipe mask for '{word['text']}' ({begin_time:.2f}s - {end_time:.2f}s)")
+            
+            # Combine all clips
+            all_clips = [base_white] + masked_clips
+            final_clip = CompositeVideoClip(all_clips)
+            
+            print(f"  Created karaoke wipe clip with {len(masked_clips)} word wipes")
+            
+            return final_clip
+            
+        except Exception as e:
+            print(f"Error creating karaoke wipe line clip for '{line['text']}': {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -455,7 +657,7 @@ class KaraokeVideoGenerator:
                     fontsize=int(60 * self.scale_factor),  # Scale test mode font size
                     color='white',
                     font='DejaVu-Sans-Mono',  # Changed to monospaced font
-                    stroke_color='black',
+                    stroke_color='white',
                     stroke_width=self.stroke_width
                 )
                 .set_start(start_time)
@@ -500,6 +702,133 @@ class KaraokeVideoGenerator:
         
         print(f"Video generation complete!")
         return output_path
+
+class Wipe:
+    """
+    A class to handle wipe transition calculations for a single word.
+    Analyzes boundaries from a padded single-frame text clip.
+    """
+    
+    def __init__(self, word_text, word_spacing, screensize=(720, 460), font_size=50, stroke_width=1):
+        """
+        Initialize wipe transition for a word.
+        
+        Args:
+            word_text: The word to analyze
+            word_spacing: Full text with proper spacing (padded with spaces)
+            screensize: Video dimensions
+            font_size: Font size for analysis
+        """
+        self.word_text = word_text
+        self.word_spacing = word_spacing
+        self.screensize = screensize
+        self.font_size = font_size
+        self.stroke_width = stroke_width
+        # Analyze the word boundaries
+        self._analyze_boundaries()
+        
+        print(f"Word '{word_text}': boundaries {self.text_left} to {self.text_right}")
+    
+    def _analyze_boundaries(self):
+        """Analyze the padded word text to find boundaries"""
+        # Create a single-frame text clip with proper spacing
+        padded_text = TextClip(self.word_spacing,
+                              color='white',
+                              font="DejaVu-Sans-Mono",
+                              bg_color='black',
+                              stroke_color='white',
+                              stroke_width=self.stroke_width,
+                              fontsize=self.font_size).set_duration(0.1).set_position(('center', 'center'))
+        
+        # Create composite to get frame
+        #temp_composite = CompositeVideoClip([padded_text], size=self.screensize)
+        mask_frame = padded_text.get_frame(0)
+        
+
+        # Store the mask frame
+        self.mask_frame = mask_frame
+
+        #temp_composite.close()
+        padded_text.close()
+        
+        # Find actual text boundaries by examining the mask frame
+        gray_frame = np.mean(mask_frame, axis=2)  # Convert to grayscale
+        text_pixels = gray_frame > 10  # Find non-black pixels
+        
+        # Find leftmost and rightmost text pixels
+        text_cols = np.any(text_pixels, axis=0)  # Check each column
+        self.text_left = np.argmax(text_cols) if np.any(text_cols) else 0
+        self.text_right = len(text_cols) - 1 - np.argmax(text_cols[::-1]) if np.any(text_cols) else self.screensize[0]
+    
+    def create_wipe_mask(self, global_time, start_time, duration):
+        """
+        Create a wipe mask for this word at the given global time.
+        
+        Args:
+            global_time: Current time in the overall video
+            start_time: When this word's wipe should start
+            duration: How long this word's wipe takes
+            
+        Returns:
+            Mask frame for this word at this time
+        """
+        # Calculate local time for this word
+        local_time = global_time - start_time
+        
+        # If before this word starts, return completely hidden mask
+        if local_time < 0:
+            hidden_mask = self.mask_frame.copy()
+            hidden_mask[:, :] = 0  # Completely black (hidden)
+            return hidden_mask
+        
+        # Calculate the reveal progress (0 to 1)
+        # Complete the reveal at 96% of duration so full text is visible
+        reveal_duration = duration * 0.96
+        progress = min(local_time / reveal_duration, 1.0)
+        
+        # Calculate the current reveal position
+        reveal_x = self.text_left + progress * (self.text_right - self.text_left)
+        
+        # Create a copy of the original mask
+        wipe_mask = self.mask_frame.copy()
+        
+        # Hide everything to the right of reveal_x by setting it to black
+        wipe_mask[:, round(reveal_x):] = 0  # Set to black
+        
+        return wipe_mask
+    
+    def create_wipe_mask_local(self, local_time, duration):
+        """
+        Create a wipe mask for this word using local time directly.
+        
+        Args:
+            local_time: Time elapsed since this word's wipe should start (0 or positive)
+            duration: How long this word's wipe takes
+            
+        Returns:
+            Mask frame for this word at this local time
+        """
+        # If negative local time, return completely hidden mask
+        if local_time < 0:
+            hidden_mask = self.mask_frame.copy()
+            hidden_mask[:, :] = 0  # Completely black (hidden)
+            return hidden_mask
+        
+        # Calculate the reveal progress (0 to 1)
+        # Complete the reveal at 96% of duration so full text is visible
+        reveal_duration = duration * 0.96
+        progress = min(local_time / reveal_duration, 1.0)
+        
+        # Calculate the current reveal position
+        reveal_x = self.text_left + progress * (self.text_right - self.text_left)
+        
+        # Create a copy of the original mask
+        wipe_mask = self.mask_frame.copy()
+        
+        # Hide everything to the right of reveal_x by setting it to black
+        wipe_mask[:, round(reveal_x):] = 0  # Set to black
+        
+        return wipe_mask
 
 if __name__ == "__main__":
     import argparse
