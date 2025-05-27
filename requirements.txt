@@ -1,8 +1,11 @@
-whisperx
+#whisperx
 numpy
 demucs
 moviepy==1.0.3
 pydub
 soundfile
+sounddevice
 transformers
 ctranslate2==4.5.0
+pyqt6
+dotenv

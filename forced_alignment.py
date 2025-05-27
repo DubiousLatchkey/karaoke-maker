@@ -12,6 +12,12 @@ import nltk
 from nltk.metrics.distance import edit_distance
 import heapq
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+print(os.getenv('LD_LIBRARY_PATH'))
+
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
@@ -193,7 +199,7 @@ class LyricsAligner:
         
         # Use whisperx for transcription (for reference)
         print("\nGenerating transcription...")
-        model = whisperx.load_model("large", self.device)
+        model = whisperx.load_model("medium", self.device)
         transcription = model.transcribe(str(audio_path), language="en")
         
         # Save transcription data

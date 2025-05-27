@@ -1,8 +1,29 @@
-from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips, VideoClip
 import os
 import json
 from pathlib import Path
 import numpy as np
+import dotenv
+dotenv.load_dotenv(dotenv_path='.env')
+
+# Load font configurations from environment variables
+FONT_NAME = os.getenv('FONT_NAME', 'Cascadia-Mono-Regular')
+FONT_COLOR_ACTIVE = os.getenv('FONT_COLOR_ACTIVE', 'yellow')
+FONT_COLOR_INACTIVE = os.getenv('FONT_COLOR_INACTIVE', 'white')
+FONT_KERNING = int(os.getenv('FONT_KERNING', '1'))
+
+image_magick_path = os.getenv('IMAGEMAGICK_BINARY', None)
+print(f"ImageMagick path: {image_magick_path}")
+print(f"Font configuration: {FONT_NAME}, kerning={FONT_KERNING}")
+print(f"Colors: active={FONT_COLOR_ACTIVE}, inactive={FONT_COLOR_INACTIVE}")
+
+from moviepy.config import change_settings
+from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips, VideoClip
+
+if image_magick_path:
+    print(f"Setting ImageMagick path to: {image_magick_path}")
+    change_settings({"IMAGEMAGICK_BINARY": image_magick_path})
+
+
 
 class KaraokeVideoGenerator:
     def __init__(self, output_dir, resolution="1280x720"):
@@ -83,6 +104,25 @@ class KaraokeVideoGenerator:
         
         # Create karaoke line clips
         line_clips = []
+        
+        # Add intro message if first line starts after 10 seconds
+        if lines and lines[0]['start'] > 10:
+            intro_duration = lines[0]['start']
+            intro_text = f"[{int(intro_duration)} second intro]"
+            intro_clip = TextClip(
+                intro_text,
+                fontsize=self.font_size,
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
+                stroke_width=self.stroke_width
+            ).set_duration(intro_duration - 1).set_position(('center', 'center'))
+            intro_clip = intro_clip.fadein(1).fadeout(1)
+            line_clips.append(intro_clip)
+            print(f"Added intro message: {intro_text}")
+        
+        # Process each line and detect gaps
         for i, line in enumerate(lines):
             is_top = (i % 2 == 0)  # Alternate between top and bottom
             
@@ -100,7 +140,24 @@ class KaraokeVideoGenerator:
                 positioned_clip = line_clip.set_position(('center', y_position))
                 line_clips.append(positioned_clip)
                 print(f"  Positioned {clip_type} line {i+1} at y={y_position}")
-
+            
+            # Check for gap between this line and the next
+            if i < len(lines) - 1:
+                gap_duration = lines[i + 1]['start'] - line['end']
+                if gap_duration > 10:
+                    break_text = f"[{int(gap_duration)} second break]"
+                    break_clip = TextClip(
+                        break_text,
+                        fontsize=self.font_size,
+                        color=FONT_COLOR_INACTIVE,
+                        font=FONT_NAME,
+                        kerning=FONT_KERNING,
+                        stroke_color=FONT_COLOR_INACTIVE,
+                        stroke_width=self.stroke_width
+                    ).set_start(line['end'] + 1).set_duration(gap_duration - 2).set_position(('center', 'center'))
+                    break_clip = break_clip.fadein(1).fadeout(1)
+                    line_clips.append(break_clip)
+                    print(f"Added break message: {break_text}")
         
         print(f"Created {len(line_clips)} positioned line clips")
         
@@ -125,7 +182,6 @@ class KaraokeVideoGenerator:
             logger="bar"
         )
         
-
         # Clean up
         audio.close()
         final_video.close()
@@ -397,9 +453,10 @@ class KaraokeVideoGenerator:
                 yellow_text = TextClip(
                     preprocessed_text,
                     fontsize=self.font_size,
-                    color='yellow',
-                    font='DejaVu-Sans-Mono',
-                    stroke_color='yellow',
+                    color=FONT_COLOR_ACTIVE,
+                    font=FONT_NAME,
+                    kerning=FONT_KERNING,
+                    stroke_color=FONT_COLOR_ACTIVE,
                     stroke_width=self.stroke_width
                 ).set_start(word_start).set_duration(word_duration)
                 
@@ -409,10 +466,11 @@ class KaraokeVideoGenerator:
                 word_mask = TextClip(
                     mask_text,
                     fontsize=self.font_size,
-                    color='white',  # White reveals, black hides
-                    font='DejaVu-Sans-Mono',
+                    color=FONT_COLOR_INACTIVE,  # White reveals, black hides
+                    font=FONT_NAME,
+                    kerning=FONT_KERNING,
                     bg_color='black',
-                    stroke_color='white',
+                    stroke_color=FONT_COLOR_INACTIVE,
                     stroke_width=self.stroke_width
                 ).set_start(word_start).set_duration(word_duration)
                 
@@ -429,9 +487,10 @@ class KaraokeVideoGenerator:
             base_white = TextClip(
                 preprocessed_text,
                 fontsize=self.font_size,
-                color='white',
-                font='DejaVu-Sans-Mono',
-                stroke_color='white',
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
                 stroke_width=self.stroke_width
             ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4)
 
@@ -491,9 +550,10 @@ class KaraokeVideoGenerator:
                 return TextClip(
                     preprocessed_text,
                     fontsize=self.font_size,
-                    color='white',
-                    font='DejaVu-Sans-Mono',
-                    stroke_color='white',
+                    color=FONT_COLOR_INACTIVE,
+                    font=FONT_NAME,
+                    kerning=FONT_KERNING,
+                    stroke_color=FONT_COLOR_INACTIVE,
                     stroke_width=self.stroke_width
                 ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4)
             
@@ -501,9 +561,10 @@ class KaraokeVideoGenerator:
             base_white = TextClip(
                 preprocessed_text,
                 fontsize=self.font_size,
-                color='white',
-                font='DejaVu-Sans-Mono',
-                stroke_color='white',
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
                 stroke_width=self.stroke_width
             ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4).set_position(('center', 'center'))
             
@@ -511,9 +572,10 @@ class KaraokeVideoGenerator:
             yellow_text = TextClip(
                 preprocessed_text,
                 fontsize=self.font_size,
-                color='yellow',
-                font='DejaVu-Sans-Mono',
-                stroke_color='yellow',
+                color=FONT_COLOR_ACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_ACTIVE,
                 stroke_width=self.stroke_width
             ).set_start(start_time).set_duration(duration).fadein(0.3).fadeout(0.4).set_position(('center', 'center'))
             
@@ -539,7 +601,7 @@ class KaraokeVideoGenerator:
                 # Create padded text with spaces before and after this word
                 word_spacing = self._create_word_spacing_for_wipe(preprocessed_text, word_text, current_word_index)
                 
-                #print(f"    Created spaced word '{word_spacing}'")
+                #print(f"    Created spaced word string with length {len(word_spacing)}")
                 
                 # Create Wipe instance
                 wipe = Wipe(word_text, word_spacing, self.resolution, self.font_size, self.stroke_width)
@@ -655,9 +717,10 @@ class KaraokeVideoGenerator:
                 text_clip = (TextClip(
                     word['text'].upper(),  # Convert to uppercase for better visibility
                     fontsize=int(60 * self.scale_factor),  # Scale test mode font size
-                    color='white',
-                    font='DejaVu-Sans-Mono',  # Changed to monospaced font
-                    stroke_color='white',
+                    color=FONT_COLOR_INACTIVE,
+                    font=FONT_NAME,  # Changed to monospaced font
+                    kerning=FONT_KERNING,
+                    stroke_color=FONT_COLOR_INACTIVE,
                     stroke_width=self.stroke_width
                 )
                 .set_start(start_time)
@@ -709,7 +772,7 @@ class Wipe:
     Analyzes boundaries from a padded single-frame text clip.
     """
     
-    def __init__(self, word_text, word_spacing, screensize=(720, 460), font_size=50, stroke_width=1):
+    def __init__(self, word_text, word_spacing, screensize=(720, 460), font_size=None, stroke_width=1):
         """
         Initialize wipe transition for a word.
         
@@ -717,13 +780,19 @@ class Wipe:
             word_text: The word to analyze
             word_spacing: Full text with proper spacing (padded with spaces)
             screensize: Video dimensions
-            font_size: Font size for analysis
+            font_size: Font size for analysis (defaults to FONT_SIZE from env)
+            stroke_width: Width of text stroke
         """
         self.word_text = word_text
         self.word_spacing = word_spacing
         self.screensize = screensize
         self.font_size = font_size
         self.stroke_width = stroke_width
+        
+        # Calculate center position explicitly
+        self.center_x = screensize[0] // 2
+        self.center_y = screensize[1] // 2
+        
         # Analyze the word boundaries
         self._analyze_boundaries()
         
@@ -731,14 +800,14 @@ class Wipe:
     
     def _analyze_boundaries(self):
         """Analyze the padded word text to find boundaries"""
-        # Create a single-frame text clip with proper spacing
+        # Create a single-frame text clip with proper spacing and explicit positioning
         padded_text = TextClip(self.word_spacing,
                               color='white',
-                              font="DejaVu-Sans-Mono",
+                              font=FONT_NAME,
                               bg_color='black',
-                              stroke_color='white',
-                              stroke_width=self.stroke_width,
-                              fontsize=self.font_size).set_duration(0.1).set_position(('center', 'center'))
+                              kerning=FONT_KERNING,
+                              fontsize=self.font_size,
+                              method='label').set_position((self.center_x, self.center_y)).set_duration(0.1)
         
         # Create composite to get frame
         #temp_composite = CompositeVideoClip([padded_text], size=self.screensize)
@@ -838,7 +907,7 @@ if __name__ == "__main__":
     parser.add_argument('--alignment', required=True, help='Path to lyrics alignment JSON file from Viterbi')
     parser.add_argument('--output_dir', help='Directory for output files (defaults to alignment file directory)')
     parser.add_argument('--output_name', help='Name for output video file (defaults to alignment filename)')
-    parser.add_argument('--resolution', default='1280x720', 
+    parser.add_argument('--resolution', default='360', 
                         help='Video resolution. Options: "WIDTHxHEIGHT" (e.g. "1920x1080") or just "HEIGHT" (e.g. "1080" for 1920x1080). Always maintains 16:9 aspect ratio (default: 1280x720)')
     parser.add_argument('--mode', choices=['test', 'karaoke'], default='karaoke',
                         help='Generation mode: "test" for simple word-by-word, "karaoke" for full karaoke style (default: karaoke)')

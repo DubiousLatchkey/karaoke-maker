@@ -179,22 +179,113 @@ def run_separation_only(input_dir, output_dir):
     for track, path in results.items():
         print(f"  {track}: {path}")
 
+def run_process_mode(input_dir, output_dir):
+    """
+    Run the processing steps without video generation:
+    1. Vocal separation using Demucs
+    2. Forced alignment with Viterbi algorithm
+    
+    Args:
+        input_dir: Directory containing audio and lyrics files
+        output_dir: Directory for output files
+        song_name: Optional custom name for output files (defaults to audio filename)
+    
+    Returns:
+        dict: Paths to all generated files
+    """
+    try:
+        print("=== KARAOKE MAKER - PROCESS MODE ===\n")
+        
+        # Find input files
+        audio_file, lyrics_file = find_input_files(input_dir)
+        if not audio_file or not lyrics_file:
+            print("Error: Could not find both audio and lyrics files in input directory")
+            print(f"Audio file: {audio_file}")
+            print(f"Lyrics file: {lyrics_file}")
+            return None
+        
+        # Determine output name
+        base_name = audio_file.stem
+        print(f"Processing: {audio_file.name}")
+        print(f"Lyrics: {lyrics_file.name}")
+        print(f"Output name: {base_name}\n")
+        
+        # Create output directory
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize components
+        print("Initializing processing components...")
+        separator = AudioSeparator(str(output_path))
+        aligner = LyricsAligner(str(output_path))
+        
+        # Step 1: Vocal Separation
+        print("\n--- STEP 1: VOCAL SEPARATION ---")
+        print("Separating vocals from instrumental using HTDemucs...")
+        separation_results = separator.separate(str(audio_file))
+        
+        vocal_path = separation_results['vocals']
+        instrumental_path = separation_results['instrumental']
+        
+        print(f"✓ Vocals extracted: {vocal_path}")
+        print(f"✓ Instrumental created: {instrumental_path}")
+        
+        # Step 2: Forced Alignment
+        print("\n--- STEP 2: FORCED ALIGNMENT + VITERBI ---")
+        print("Running ASR transcription...")
+        
+        # Generate ASR alignment
+        asr_alignment_path = aligner.run_asr(vocal_path)
+        print(f"✓ ASR transcription complete: {asr_alignment_path}")
+        
+        print("Running Viterbi alignment with lyrics...")
+        # Align ASR to lyrics using Viterbi
+        final_alignment_path = aligner.align_to_lyrics(asr_alignment_path, str(lyrics_file))
+        print(f"✓ Viterbi alignment complete: {final_alignment_path}")
+        
+        # Summary
+        print("\n=== PROCESS COMPLETE ===")
+        results = {
+            'original_audio': str(audio_file),
+            'lyrics': str(lyrics_file),
+            'vocals': vocal_path,
+            'instrumental': instrumental_path,
+            'asr_alignment': asr_alignment_path,
+            'final_alignment': final_alignment_path,
+            'base_name': base_name
+        }
+        
+        print("Generated files:")
+        for key, path in results.items():
+            if key not in ['original_audio', 'lyrics', 'base_name']:
+                print(f"  {key}: {path}")
+        
+        return results
+        
+    except Exception as e:
+        print(f"Error during processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def main():
     parser = argparse.ArgumentParser(description='Generate karaoke video from audio and lyrics')
     parser.add_argument('--input_dir', help='Directory containing audio and lyrics files (not required for effects mode)')
-    parser.add_argument('--output_dir', required=True, help='Directory for output files')
+    parser.add_argument('--output_dir', help='Directory for output files')
     parser.add_argument('--song_name', help='Custom name for output files (defaults to audio filename)')
-    parser.add_argument('--mode', choices=['full', 'test', 'separation', 'effects'], default='full',
-                       help='Processing mode: full (complete process), test (alignment only), separation (audio separation only), effects (karaoke effects test)')
-    parser.add_argument('--text', default='GeeksforGeeks', help='Text for karaoke effects testing')
+    parser.add_argument('--mode', choices=['full', 'test', 'separation', 'effects', 'process'], default='full',
+                       help='Processing mode: full (complete process), test (alignment only), separation (audio separation only), effects (karaoke effects test), process (separation + alignment without video)')
     args = parser.parse_args()
+    
+    # Set default output directory to input directory if not specified
+    if not args.output_dir:
+        args.output_dir = args.input_dir
     
     # Create output directory if it doesn't exist
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
     # Check input_dir requirement for non-effects modes
-    if args.mode != 'effects' and not args.input_dir:
+    if not args.input_dir:
         parser.error(f"--input_dir is required for mode '{args.mode}'")
     
     if args.mode == 'full':
@@ -203,6 +294,8 @@ def main():
         run_test_mode(args.input_dir, args.output_dir)
     elif args.mode == 'separation':
         run_separation_only(args.input_dir, args.output_dir)
+    elif args.mode == 'process':
+        run_process_mode(args.input_dir, args.output_dir)
 
 if __name__ == "__main__":
     main() 

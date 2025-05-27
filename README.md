@@ -39,8 +39,13 @@ The program will generate:
 - A karaoke video with timed lyrics
 
 
-Download torch and torchaudio with the website (pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118) for gpu
+Download torch and torchaudio with the website (pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126) for gpu
 
 Use this env variable to make sure whisperx can access stuff export LD_LIBRARY_PATH=/{absolute path to venv}/lib/python3.XX/site-packages/nvidia/cudnn/lib/
 
+
 Needs imagemagick and ffmpeg
+
+Needs sounddevice and soundfile
+
+On windows: set IMAGEMAGICK_BINARY in .env
