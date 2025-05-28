@@ -4,7 +4,7 @@ from pathlib import Path
 from audio_separation import AudioSeparator
 from forced_alignment import LyricsAligner
 from video_generator import KaraokeVideoGenerator
-from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, VideoClip
+from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, VideoClip, concatenate_videoclips
 import dotenv
 dotenv.load_dotenv(dotenv_path='.env')
 
@@ -170,6 +170,20 @@ class SignalBasedVideoGenerator(KaraokeVideoGenerator):
         if self.progress_signal:
             self.progress_signal.emit(f"Audio duration: {duration:.2f} seconds")
         
+        # Load metadata to get song title and artist
+        metadata_path = Path(alignment_path).parent / "metadata.json"
+        song_title = output_name
+        artist = ""
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                    song_title = metadata.get('name', output_name)
+                    artist = metadata.get('artist', '')
+            except Exception as e:
+                if self.progress_signal:
+                    self.progress_signal.emit(f"Warning: Could not load metadata: {e}")
+        
         # Group words into lines based on line_end markers
         lines = self._group_words_into_lines(alignment_data)
         if self.progress_signal:
@@ -180,24 +194,6 @@ class SignalBasedVideoGenerator(KaraokeVideoGenerator):
         
         # Create karaoke line clips
         line_clips = []
-        
-        # Add intro message if first line starts after 10 seconds
-        if lines and lines[0]['start'] > 10:
-            intro_duration = lines[0]['start']
-            intro_text = f"[{int(intro_duration)} second intro]"
-            intro_clip = TextClip(
-                intro_text,
-                fontsize=self.font_size,
-                color=FONT_COLOR_INACTIVE,
-                font=FONT_NAME,
-                kerning=FONT_KERNING,
-                stroke_color=FONT_COLOR_INACTIVE,
-                stroke_width=self.stroke_width
-            ).set_duration(intro_duration - 1).set_position(('center', 'center'))
-            intro_clip = intro_clip.fadein(1).fadeout(1)
-            line_clips.append(intro_clip)
-            if self.progress_signal:
-                self.progress_signal.emit(f"Added intro message: {intro_text}")
         
         # Process each line and detect gaps
         for i, line in enumerate(lines):
@@ -241,6 +237,45 @@ class SignalBasedVideoGenerator(KaraokeVideoGenerator):
         if self.progress_signal:
             self.progress_signal.emit(f"Created {len(line_clips)} positioned line clips")
         
+        # Handle intro based on timing of first line
+        first_line_start = lines[0]['start'] if lines else 0
+        intro_clips = []
+        
+        if first_line_start >= 5:
+            # Create intro clip to be composited with the main video
+            intro_text = f"{song_title}\n{artist}" if artist else song_title
+            intro_clip = TextClip(
+                intro_text,
+                fontsize=self.font_size,
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
+                stroke_width=self.stroke_width,
+                align='center'
+            ).set_duration(first_line_start - 1).set_position(('center', 'center'))
+            intro_clip = intro_clip.fadein(1).fadeout(1)
+            line_clips.append(intro_clip)
+            if self.progress_signal:
+                self.progress_signal.emit(f"Added intro title during musical intro")
+        else:
+            # Create separate 5-second intro clip
+            intro_text = f"{song_title}\n{artist}" if artist else song_title
+            intro_clip = TextClip(
+                intro_text,
+                fontsize=self.font_size,
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
+                stroke_width=self.stroke_width,
+                align='center'
+            ).set_duration(5).set_position(('center', 'center'))
+            intro_clip = intro_clip.fadein(1).fadeout(1)
+            intro_clips.append(intro_clip)
+            if self.progress_signal:
+                self.progress_signal.emit(f"Created separate 5-second intro clip")
+        
         # Combine all clips
         mode_name = "wipe" if use_wipe else "karaoke"
         if self.progress_signal:
@@ -249,6 +284,13 @@ class SignalBasedVideoGenerator(KaraokeVideoGenerator):
         
         # Add audio
         final_video = final_video.set_audio(audio)
+        
+        # If we have a separate intro clip, concatenate it with the main video
+        if intro_clips:
+            intro_video = CompositeVideoClip([ColorClip(size=self.resolution, color=(0, 0, 0), duration=5)] + intro_clips)
+            final_video = concatenate_videoclips([intro_video, final_video])
+            if self.progress_signal:
+                self.progress_signal.emit("Concatenated intro clip with main video")
         
         # Write output file
         output_path = os.path.join(self.output_dir, f"{output_name}.mp4")

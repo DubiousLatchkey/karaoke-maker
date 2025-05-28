@@ -892,33 +892,40 @@ class ProcessThread(QThread):
 
 class VideoExportThread(QThread):
     """Thread for generating the karaoke video"""
-    progress = pyqtSignal(str)  # Progress message
-    finished = pyqtSignal(str)  # Output video path
-    error = pyqtSignal(str)  # Error message
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
     
-    def __init__(self, project_dir, instrumental_path, alignment_path, output_name):
+    def __init__(self, instrumental_path, alignment_path, output_name, output_dir, resolution="1280x720", use_wipe=True, song_title=None, artist=None):
         super().__init__()
-        self.project_dir = project_dir
         self.instrumental_path = instrumental_path
         self.alignment_path = alignment_path
         self.output_name = output_name
+        self.output_dir = output_dir
+        self.resolution = resolution
+        self.use_wipe = use_wipe
+        self.song_title = song_title
+        self.artist = artist
         
     def run(self):
         try:
-            from signal_based_processors import SignalBasedVideoGenerator
+            from generate_video_in_process import generate_video_in_process
             
-            # Initialize video generator with progress signal
-            video_gen = SignalBasedVideoGenerator(str(self.project_dir), progress_signal=self.progress)
-            
-            # Generate video
-            video_path = video_gen.generate(
+            # Generate video in separate process
+            result = generate_video_in_process(
                 self.instrumental_path,
                 self.alignment_path,
-                self.output_name
+                self.output_name,
+                self.output_dir,
+                self.resolution,
+                self.use_wipe,
+                progress_callback=self.progress.emit,
+                song_title=self.song_title,
+                artist=self.artist
             )
             
-            if video_path:
-                self.finished.emit(video_path)
+            if result:
+                self.finished.emit(result)
             else:
                 self.error.emit("Video generation failed")
                 
@@ -1540,15 +1547,21 @@ class KaraokeEditorMainWindow(QMainWindow):
                 button.setEnabled(False)
                 break
                 
-        # Get output name
+        # Get output name and metadata
         output_name = self.project_metadata['name'] if self.project_metadata['name'] else project_path.name
+        song_title = self.project_metadata.get('name', '')
+        artist = self.project_metadata.get('artist', '')
         
         # Create and start export thread
         self.export_thread = VideoExportThread(
-            self.current_project_dir,
             instrumental_path,
             alignment_path,
-            output_name
+            output_name,
+            str(project_path),
+            resolution="360",
+            use_wipe=True,
+            song_title=song_title,
+            artist=artist
         )
         self.export_thread.progress.connect(self.statusBar().showMessage)
         self.export_thread.finished.connect(self.on_export_finished)

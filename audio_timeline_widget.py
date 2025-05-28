@@ -158,7 +158,7 @@ class AudioTimelineWidget(QWidget):
                 self.update_scroll_bar_position()
             elif self.current_position > self.scroll_position + self.zoom_level:
                 self.scroll_position = min(self.audio_length - self.zoom_level, 
-                                         self.current_position - self.zoom_level * 0.9)
+                                         self.current_position - self.zoom_level * 0.5)
                 self.update_scroll_bar_position()
         
         self.update_time_display()
@@ -576,9 +576,9 @@ class AudioTimelineWidget(QWidget):
                     
                     # Apply snap-to-grid based on zoom level
                     if self.zoom_level <= 10:  # When zoomed in close
-                        snap_interval = 0.05  # Snap to 100ms intervals
+                        snap_interval = 0.01  # Snap to 10ms intervals
                     elif self.zoom_level <= 30:
-                        snap_interval = 0.5  # Snap to 500ms intervals
+                        snap_interval = 0.1  # Snap to 100ms intervals
                     else:
                         snap_interval = 1.0  # Snap to 1s intervals
                     

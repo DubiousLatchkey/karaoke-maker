@@ -17,7 +17,7 @@ print(f"Font configuration: {FONT_NAME}, kerning={FONT_KERNING}")
 print(f"Colors: active={FONT_COLOR_ACTIVE}, inactive={FONT_COLOR_INACTIVE}")
 
 from moviepy.config import change_settings
-from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, VideoClip
+from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, VideoClip, concatenate_videoclips
 
 if image_magick_path:
     print(f"Setting ImageMagick path to: {image_magick_path}")
@@ -68,7 +68,7 @@ class KaraokeVideoGenerator:
         print(f"Font size: {self.font_size}, Text width: {self.text_width}")
         print(f"Y positions: top={self.y_top}, bottom={self.y_bottom}")
         
-    def generate(self, instrumental_path, alignment_path, output_name, use_wipe=True):
+    def generate(self, instrumental_path, alignment_path, output_name, use_wipe=True, song_title="", artist=""):
         """
         Generate karaoke video with timed lyrics in karaoke style
         
@@ -77,6 +77,8 @@ class KaraokeVideoGenerator:
             alignment_path (str): Path to the alignment JSON file with line_end markers
             output_name (str): Name for the output video file
             use_wipe (bool): Whether to use wipe transitions instead of progressive highlighting
+            song_title (str): Title of the song (for intro)
+            artist (str): Artist of the song (for intro)
             
         Returns:
             str: Path to the generated video file
@@ -104,23 +106,6 @@ class KaraokeVideoGenerator:
         
         # Create karaoke line clips
         line_clips = []
-        
-        # Add intro message if first line starts after 10 seconds
-        if lines and lines[0]['start'] > 10:
-            intro_duration = lines[0]['start']
-            intro_text = f"[{int(intro_duration)} second intro]"
-            intro_clip = TextClip(
-                intro_text,
-                fontsize=self.font_size,
-                color=FONT_COLOR_INACTIVE,
-                font=FONT_NAME,
-                kerning=FONT_KERNING,
-                stroke_color=FONT_COLOR_INACTIVE,
-                stroke_width=self.stroke_width
-            ).set_duration(intro_duration - 1).set_position(('center', 'center'))
-            intro_clip = intro_clip.fadein(1).fadeout(1)
-            line_clips.append(intro_clip)
-            print(f"Added intro message: {intro_text}")
         
         # Process each line and detect gaps
         for i, line in enumerate(lines):
@@ -160,11 +145,53 @@ class KaraokeVideoGenerator:
                     print(f"Added break message: {break_text}")
         
         print(f"Created {len(line_clips)} positioned line clips")
+
+        # Handle intro based on timing of first line
+        first_line_start = lines[0]['start'] if lines else 0
+        intro_clips = []
+        
+        if first_line_start >= 5:
+            # Create intro clip to be composited with the main video
+            intro_text = f"{song_title}\n{artist}" if artist else song_title
+            intro_clip = TextClip(
+                intro_text,
+                fontsize=self.font_size,
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
+                stroke_width=self.stroke_width,
+                align='center'
+            ).set_duration(first_line_start - 1).set_position(('center', 'center'))
+            intro_clip = intro_clip.fadein(1).fadeout(1)
+            line_clips.append(intro_clip)
+            print(f"Added intro title during musical intro")
+        else:
+            # Create separate 5-second intro clip
+            intro_text = f"{song_title}\n{artist}" if artist else song_title
+            intro_clip = TextClip(
+                intro_text,
+                fontsize=self.font_size,
+                color=FONT_COLOR_INACTIVE,
+                font=FONT_NAME,
+                kerning=FONT_KERNING,
+                stroke_color=FONT_COLOR_INACTIVE,
+                stroke_width=self.stroke_width,
+                align='center'
+            ).set_duration(5).set_position(('center', 'center'))
+            intro_clip = intro_clip.fadein(1).fadeout(1)
+            intro_clips.append(intro_clip)
+            print(f"Created separate 5-second intro clip")
         
         # Combine all clips
         mode_name = "wipe" if use_wipe else "karaoke"
         print(f"Compositing {mode_name} video...")
         final_video = CompositeVideoClip([background] + line_clips)
+
+        if intro_clips:
+            intro_video = CompositeVideoClip([ColorClip(size=self.resolution, color=(0, 0, 0), duration=5)] + intro_clips)
+            final_video = concatenate_videoclips([intro_video, final_video])
+        
         
         # Add audio
         final_video = final_video.set_audio(audio)
