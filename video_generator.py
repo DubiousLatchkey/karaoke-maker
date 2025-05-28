@@ -17,7 +17,7 @@ print(f"Font configuration: {FONT_NAME}, kerning={FONT_KERNING}")
 print(f"Colors: active={FONT_COLOR_ACTIVE}, inactive={FONT_COLOR_INACTIVE}")
 
 from moviepy.config import change_settings
-from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips, VideoClip
+from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, VideoClip
 
 if image_magick_path:
     print(f"Setting ImageMagick path to: {image_magick_path}")

@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                              QWidget, QPushButton, QFileDialog, QLabel, QSlider, 
                              QListWidget, QListWidgetItem, QSplitter, QTextEdit,
                              QProgressBar, QFrame, QSpacerItem, QSizePolicy, QDoubleSpinBox,
-                             QCheckBox)
+                             QCheckBox, QDialog, QLineEdit, QDialogButtonBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt6.QtGui import QFont, QIcon, QKeySequence
 import sounddevice as sd
@@ -15,6 +15,105 @@ import numpy as np
 import threading
 import time
 from audio_timeline_widget import AudioTimelineWidget
+import shutil
+
+class ProjectPropertiesDialog(QDialog):
+    """Dialog for creating or editing project properties"""
+    
+    def __init__(self, parent=None, project_data=None):
+        super().__init__(parent)
+        self.project_data = project_data or {}
+        self.setup_ui()
+        
+    def setup_ui(self):
+        self.setWindowTitle("Project Properties")
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout()
+        
+        # Song name
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("Song Name:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setText(self.project_data.get('name', ''))
+        name_layout.addWidget(self.name_edit)
+        layout.addLayout(name_layout)
+        
+        # Artist
+        artist_layout = QHBoxLayout()
+        artist_layout.addWidget(QLabel("Artist:"))
+        self.artist_edit = QLineEdit()
+        self.artist_edit.setText(self.project_data.get('artist', ''))
+        artist_layout.addWidget(self.artist_edit)
+        layout.addLayout(artist_layout)
+        
+        # Audio file
+        audio_layout = QHBoxLayout()
+        audio_layout.addWidget(QLabel("Audio File:"))
+        self.audio_path_edit = QLineEdit()
+        self.audio_path_edit.setText(self.project_data.get('audio_file', ''))
+        self.audio_path_edit.setReadOnly(True)
+        audio_layout.addWidget(self.audio_path_edit)
+        
+        browse_audio_btn = QPushButton("Browse...")
+        browse_audio_btn.clicked.connect(self.browse_audio_file)
+        audio_layout.addWidget(browse_audio_btn)
+        layout.addLayout(audio_layout)
+        
+        # Lyrics file
+        lyrics_layout = QHBoxLayout()
+        lyrics_layout.addWidget(QLabel("Lyrics File:"))
+        self.lyrics_path_edit = QLineEdit()
+        self.lyrics_path_edit.setText(self.project_data.get('lyrics_file', ''))
+        self.lyrics_path_edit.setReadOnly(True)
+        lyrics_layout.addWidget(self.lyrics_path_edit)
+        
+        browse_lyrics_btn = QPushButton("Browse...")
+        browse_lyrics_btn.clicked.connect(self.browse_lyrics_file)
+        lyrics_layout.addWidget(browse_lyrics_btn)
+        layout.addLayout(lyrics_layout)
+        
+        # Dialog buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        
+        self.setLayout(layout)
+        
+    def browse_audio_file(self):
+        """Open file dialog to select audio file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Audio File",
+            str(Path.home()),
+            "Audio Files (*.mp3 *.wav *.flac *.m4a *.aac)"
+        )
+        if file_path:
+            self.audio_path_edit.setText(file_path)
+            
+    def browse_lyrics_file(self):
+        """Open file dialog to select lyrics file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Lyrics File",
+            str(Path.home()),
+            "Text Files (*.txt)"
+        )
+        if file_path:
+            self.lyrics_path_edit.setText(file_path)
+            
+    def get_project_data(self):
+        """Get the project data from the dialog fields"""
+        return {
+            'name': self.name_edit.text().strip(),
+            'artist': self.artist_edit.text().strip(),
+            'audio_file': self.audio_path_edit.text(),
+            'lyrics_file': self.lyrics_path_edit.text()
+        }
 
 class AudioPlayer:
     """Audio player using sounddevice for reliable playback and seeking"""
@@ -257,7 +356,7 @@ class ProjectLoader:
         """Save project data to a JSON file"""
         try:
             project_path = Path(project_dir)
-            project_file = project_path / "project.json"
+            project_file = project_path / "metadata.json"
             
             with open(project_file, 'w', encoding='utf-8') as f:
                 json.dump(word_data, f, indent=2)
@@ -766,6 +865,66 @@ class WordOperationsWidget(QWidget):
             
         self.word_deleted.emit(self.current_word)
 
+class ProcessThread(QThread):
+    """Thread for running the karaoke processing steps"""
+    progress = pyqtSignal(str)  # Progress message
+    finished = pyqtSignal(dict)  # Results dictionary
+    error = pyqtSignal(str)  # Error message
+    
+    def __init__(self, input_dir, output_dir):
+        super().__init__()
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        
+    def run(self):
+        try:
+            from signal_based_processors import run_process_mode_with_signals
+            
+            # Run the process with progress signals
+            results = run_process_mode_with_signals(self.input_dir, self.output_dir, self.progress)
+            if results:
+                self.finished.emit(results)
+            else:
+                self.error.emit("Processing failed")
+                
+        except Exception as e:
+            self.error.emit(str(e))
+
+class VideoExportThread(QThread):
+    """Thread for generating the karaoke video"""
+    progress = pyqtSignal(str)  # Progress message
+    finished = pyqtSignal(str)  # Output video path
+    error = pyqtSignal(str)  # Error message
+    
+    def __init__(self, project_dir, instrumental_path, alignment_path, output_name):
+        super().__init__()
+        self.project_dir = project_dir
+        self.instrumental_path = instrumental_path
+        self.alignment_path = alignment_path
+        self.output_name = output_name
+        
+    def run(self):
+        try:
+            from signal_based_processors import SignalBasedVideoGenerator
+            
+            # Initialize video generator with progress signal
+            video_gen = SignalBasedVideoGenerator(str(self.project_dir), progress_signal=self.progress)
+            
+            # Generate video
+            video_path = video_gen.generate(
+                self.instrumental_path,
+                self.alignment_path,
+                self.output_name
+            )
+            
+            if video_path:
+                self.finished.emit(video_path)
+            else:
+                self.error.emit("Video generation failed")
+                
+        except Exception as e:
+            self.error.emit(str(e))
+
 class KaraokeEditorMainWindow(QMainWindow):
     """Main window for the karaoke timing editor"""
     
@@ -773,6 +932,14 @@ class KaraokeEditorMainWindow(QMainWindow):
         super().__init__()
         self.audio_player = AudioPlayer()
         self.current_project_dir = None
+        self.project_metadata = {
+            'name': '',
+            'artist': '',
+            'audio_file': '',
+            'lyrics_file': ''
+        }
+        self.process_thread = None
+        self.export_thread = None
         self.setup_ui()
         
     def setup_ui(self):
@@ -799,13 +966,30 @@ class KaraokeEditorMainWindow(QMainWindow):
         self.project_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         project_layout.addWidget(self.project_label)
         
-        open_button = QPushButton("Open Project Folder")
+        new_project_button = QPushButton("New Project")
+        new_project_button.clicked.connect(self.create_new_project)
+        project_layout.addWidget(new_project_button)
+        
+        edit_project_button = QPushButton("Edit Project Properties")
+        edit_project_button.clicked.connect(self.edit_project)
+        project_layout.addWidget(edit_project_button)
+        
+        open_button = QPushButton("Load Project From Folder")
         open_button.clicked.connect(self.open_project_folder)
         project_layout.addWidget(open_button)
         
         save_button = QPushButton("Save Project")
         save_button.clicked.connect(self.save_project)
         project_layout.addWidget(save_button)
+        
+        # Add process and export buttons
+        process_button = QPushButton("Process Project")
+        process_button.clicked.connect(self.process_project)
+        project_layout.addWidget(process_button)
+        
+        export_button = QPushButton("Export Video")
+        export_button.clicked.connect(self.export_video)
+        project_layout.addWidget(export_button)
         
         project_layout.addStretch()
         main_layout.addLayout(project_layout)
@@ -879,6 +1063,13 @@ class KaraokeEditorMainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu('File')
         
+        new_project_action = file_menu.addAction('New Project')
+        new_project_action.triggered.connect(self.create_new_project)
+        new_project_action.setShortcut(QKeySequence.StandardKey.New)
+        
+        edit_project_action = file_menu.addAction('Edit Project')
+        edit_project_action.triggered.connect(self.edit_project)
+        
         open_action = file_menu.addAction('Open Project Folder')
         open_action.triggered.connect(self.open_project_folder)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
@@ -906,8 +1097,31 @@ class KaraokeEditorMainWindow(QMainWindow):
     def load_project(self, project_dir):
         """Load a karaoke project from directory"""
         self.current_project_dir = project_dir
-        project_name = Path(project_dir).name
-        self.project_label.setText(f"Project: {project_name}")
+        project_path = Path(project_dir)
+        
+        # Load metadata if it exists
+        metadata_file = project_path / "metadata.json"
+        if metadata_file.exists():
+            try:
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    self.project_metadata = json.load(f)
+            except Exception as e:
+                print(f"Error loading metadata: {e}")
+                self.project_metadata = {
+                    'name': '',
+                    'artist': '',
+                    'audio_file': '',
+                    'lyrics_file': ''
+                }
+        
+        # Update project label with metadata if available
+        if self.project_metadata['name']:
+            display_name = self.project_metadata['name']
+            if self.project_metadata['artist']:
+                display_name = f"{self.project_metadata['artist']} - {display_name}"
+            self.project_label.setText(f"Project: {display_name}")
+        else:
+            self.project_label.setText(f"Project: {project_path.name}")
         
         # Find and load audio file
         audio_file = ProjectLoader.find_audio_file(project_dir)
@@ -1059,10 +1273,21 @@ class KaraokeEditorMainWindow(QMainWindow):
         # Get word data from timeline
         word_data = self.audio_timeline.word_timings
         
-        if ProjectLoader.save_project_data(self.current_project_dir, word_data):
+        # Save both word data and metadata
+        try:
+            project_path = Path(self.current_project_dir)
+            
+            # Save word data
+            with open(project_path / "project.json", 'w', encoding='utf-8') as f:
+                json.dump(word_data, f, indent=2)
+                
+            # Save metadata
+            with open(project_path / "metadata.json", 'w', encoding='utf-8') as f:
+                json.dump(self.project_metadata, f, indent=2)
+                
             self.statusBar().showMessage("Project saved successfully")
-        else:
-            self.statusBar().showMessage("Error saving project")
+        except Exception as e:
+            self.statusBar().showMessage(f"Error saving project: {e}")
 
     def add_word(self, word_data):
         """Add a new word to the timeline"""
@@ -1139,6 +1364,216 @@ class KaraokeEditorMainWindow(QMainWindow):
         
         # Also seek to this position
         self.audio_player.seek(center_position)
+
+    def create_new_project(self):
+        """Create a new project"""
+        dialog = ProjectPropertiesDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            project_data = dialog.get_project_data()
+            
+            # Validate required fields
+            if not all([project_data['name'], project_data['audio_file'], project_data['lyrics_file']]):
+                self.statusBar().showMessage("Error: Song name, audio file, and lyrics file are required")
+                return
+                
+            # Create project directory
+            project_dir = Path("songs") / project_data['name']
+            project_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy files to project directory
+            audio_ext = Path(project_data['audio_file']).suffix
+            shutil.copy2(project_data['audio_file'], project_dir / f"song{audio_ext}")
+            shutil.copy2(project_data['lyrics_file'], project_dir / "lyrics.txt")
+            
+            # Update metadata
+            self.project_metadata = {
+                'name': project_data['name'],
+                'artist': project_data['artist'],
+                'audio_file': str(project_dir / f"song{audio_ext}"),
+                'lyrics_file': str(project_dir / "lyrics.txt")
+            }
+            
+            # Save metadata
+            with open(project_dir / "metadata.json", 'w', encoding='utf-8') as f:
+                json.dump(self.project_metadata, f, indent=2)
+                
+            # Load the new project
+            self.load_project(str(project_dir))
+            self.statusBar().showMessage(f"Created new project: {project_data['name']}")
+            
+    def edit_project(self):
+        """Edit current project properties"""
+        if not self.current_project_dir:
+            self.statusBar().showMessage("No project loaded to edit")
+            return
+            
+        # Show edit dialog with current metadata
+        dialog = ProjectPropertiesDialog(self, self.project_metadata)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_data = dialog.get_project_data()
+            
+            # Validate required fields
+            if not all([new_data['name'], new_data['audio_file'], new_data['lyrics_file']]):
+                self.statusBar().showMessage("Error: Song name, audio file, and lyrics file are required")
+                return
+                
+            # Update project directory if name changed
+            if new_data['name'] != self.project_metadata['name']:
+                new_dir = Path("songs") / new_data['name']
+                if new_dir.exists():
+                    self.statusBar().showMessage("Error: A project with this name already exists")
+                    return
+                    
+                # Rename directory
+                old_dir = Path(self.current_project_dir)
+                old_dir.rename(new_dir)
+                self.current_project_dir = str(new_dir)
+                
+            # Copy new files if they changed
+            if new_data['audio_file'] != self.project_metadata['audio_file']:
+                audio_ext = Path(new_data['audio_file']).suffix
+                shutil.copy2(new_data['audio_file'], Path(self.current_project_dir) / f"song{audio_ext}")
+                new_data['audio_file'] = str(Path(self.current_project_dir) / f"song{audio_ext}")
+                
+            if new_data['lyrics_file'] != self.project_metadata['lyrics_file']:
+                shutil.copy2(new_data['lyrics_file'], Path(self.current_project_dir) / "lyrics.txt")
+                new_data['lyrics_file'] = str(Path(self.current_project_dir) / "lyrics.txt")
+                
+            # Update metadata
+            self.project_metadata = new_data
+                
+            # Save metadata
+            with open(Path(self.current_project_dir) / "metadata.json", 'w', encoding='utf-8') as f:
+                json.dump(self.project_metadata, f, indent=2)
+                
+            # Reload project
+            self.load_project(self.current_project_dir)
+            self.statusBar().showMessage("Project updated successfully")
+
+    def process_project(self):
+        """Run the processing steps (separation and alignment) in background"""
+        if not self.current_project_dir:
+            self.statusBar().showMessage("No project loaded to process")
+            return
+            
+        # Disable process button while running
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Process Project":
+                button.setEnabled(False)
+                break
+                
+        # Create and start processing thread
+        self.process_thread = ProcessThread(self.current_project_dir, self.current_project_dir)
+        self.process_thread.progress.connect(self.statusBar().showMessage)
+        self.process_thread.finished.connect(self.on_processing_finished)
+        self.process_thread.error.connect(self.on_processing_error)
+        self.process_thread.start()
+        
+    def on_processing_finished(self, results):
+        """Handle successful completion of processing"""
+        # Re-enable process button
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Process Project":
+                button.setEnabled(True)
+                break
+                
+        self.statusBar().showMessage("Project processed successfully")
+
+    def on_processing_finished(self, results):
+        """Handle successful completion of processing"""
+        # Re-enable process button
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Process Project":
+                button.setEnabled(True)
+                break
+                
+        # Delete project.json if it exists
+        project_json = Path(self.current_project_dir) / "project.json"
+        if project_json.exists():
+            project_json.unlink()
+
+        # Reload the project to show new alignment data
+        self.load_project(self.current_project_dir)
+        
+    def on_processing_error(self, error_msg):
+        """Handle processing error"""
+        # Re-enable process button
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Process Project":
+                button.setEnabled(True)
+                break
+                
+        self.statusBar().showMessage(f"Error: {error_msg}")
+            
+    def export_video(self):
+        """Generate the karaoke video in background"""
+        if not self.current_project_dir:
+            self.statusBar().showMessage("No project loaded to export")
+            return
+            
+        # Find the instrumental and alignment files
+        project_path = Path(self.current_project_dir)
+        instrumental_path = None
+        alignment_path = None
+        
+        # Look for instrumental file
+        for file in project_path.iterdir():
+            if file.name.startswith('song_instrumental'):
+                instrumental_path = str(file)
+                break
+                
+        # Look for alignment file
+        for file in project_path.iterdir():
+            if file.name.endswith('project.json'):
+                alignment_path = str(file)
+                break
+            if file.name.endswith('lyrics_alignment.json'):
+                alignment_path = str(file)
+                
+        if not instrumental_path or not alignment_path:
+            self.statusBar().showMessage("Error: Could not find required files for video generation")
+            return
+            
+        # Disable export button while running
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Export Video":
+                button.setEnabled(False)
+                break
+                
+        # Get output name
+        output_name = self.project_metadata['name'] if self.project_metadata['name'] else project_path.name
+        
+        # Create and start export thread
+        self.export_thread = VideoExportThread(
+            self.current_project_dir,
+            instrumental_path,
+            alignment_path,
+            output_name
+        )
+        self.export_thread.progress.connect(self.statusBar().showMessage)
+        self.export_thread.finished.connect(self.on_export_finished)
+        self.export_thread.error.connect(self.on_export_error)
+        self.export_thread.start()
+        
+    def on_export_finished(self, video_path):
+        """Handle successful completion of video export"""
+        # Re-enable export button
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Export Video":
+                button.setEnabled(True)
+                break
+                
+        self.statusBar().showMessage(f"Video exported successfully: {video_path}")
+        
+    def on_export_error(self, error_msg):
+        """Handle video export error"""
+        # Re-enable export button
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Export Video":
+                button.setEnabled(True)
+                break
+                
+        self.statusBar().showMessage(f"Error: {error_msg}")
 
 def main():
     """Main entry point for the GUI application"""
