@@ -72,7 +72,6 @@ class ProjectPropertiesDialog(QDialog):
         browse_lyrics_btn.clicked.connect(self.browse_lyrics_file)
         lyrics_layout.addWidget(browse_lyrics_btn)
         layout.addLayout(lyrics_layout)
-        
         # Dialog buttons
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | 
@@ -878,15 +877,18 @@ class ProcessThread(QThread):
         
     def run(self):
         try:
-            from signal_based_processors import run_process_mode_with_signals
+            from separate_and_align_in_process import separate_and_align_in_process
             
-            # Run the process with progress signals
-            results = run_process_mode_with_signals(self.input_dir, self.output_dir, self.progress)
-            if results:
-                self.finished.emit(results)
-            else:
-                self.error.emit("Processing failed")
-                
+            # Run audio separation and alignment in a separate process
+            result = separate_and_align_in_process(
+                self.input_dir,
+                self.output_dir,
+                progress_callback=lambda msg: self.progress.emit(msg)
+            )
+            
+            # Emit the results
+            self.finished.emit(result)
+            
         except Exception as e:
             self.error.emit(str(e))
 
@@ -990,7 +992,7 @@ class KaraokeEditorMainWindow(QMainWindow):
         project_layout.addWidget(save_button)
         
         # Add process and export buttons
-        process_button = QPushButton("Process Project")
+        process_button = QPushButton("Align Audio")
         process_button.clicked.connect(self.process_project)
         project_layout.addWidget(process_button)
         
@@ -1058,8 +1060,8 @@ class KaraokeEditorMainWindow(QMainWindow):
         # Timer for updating timeline position
         self.position_timer = QTimer()
         self.position_timer.timeout.connect(self.update_timeline_position)
-        self.position_timer.start(100)  # Update every 100ms
-        
+        self.position_timer.start(10)  # Update every 10ms
+
         # Status bar
         self.statusBar().showMessage("Ready - Open a project folder to begin")
         
@@ -1383,8 +1385,16 @@ class KaraokeEditorMainWindow(QMainWindow):
                 self.statusBar().showMessage("Error: Song name, audio file, and lyrics file are required")
                 return
                 
+            # Create sanitized directory name
+            sanitized_name = "".join(c for c in project_data['name'] if c.isalnum() or c in (' ', '-', '_')).strip()
+            sanitized_name = sanitized_name.replace(' ', '_')
+            
             # Create project directory
-            project_dir = Path("songs") / project_data['name']
+            project_dir = Path("songs") / sanitized_name
+            if project_dir.exists():
+                self.statusBar().showMessage("Error: A project with this name already exists")
+                return
+                
             project_dir.mkdir(parents=True, exist_ok=True)
             
             # Copy files to project directory
@@ -1424,9 +1434,13 @@ class KaraokeEditorMainWindow(QMainWindow):
                 self.statusBar().showMessage("Error: Song name, audio file, and lyrics file are required")
                 return
                 
+            # Create sanitized directory name
+            sanitized_name = "".join(c for c in new_data['name'] if c.isalnum() or c in (' ', '-', '_')).strip()
+            sanitized_name = sanitized_name.replace(' ', '_')
+            
             # Update project directory if name changed
-            if new_data['name'] != self.project_metadata['name']:
-                new_dir = Path("songs") / new_data['name']
+            if sanitized_name != Path(self.current_project_dir).name:
+                new_dir = Path("songs") / sanitized_name
                 if new_dir.exists():
                     self.statusBar().showMessage("Error: A project with this name already exists")
                     return
@@ -1446,8 +1460,13 @@ class KaraokeEditorMainWindow(QMainWindow):
                 shutil.copy2(new_data['lyrics_file'], Path(self.current_project_dir) / "lyrics.txt")
                 new_data['lyrics_file'] = str(Path(self.current_project_dir) / "lyrics.txt")
                 
-            # Update metadata
-            self.project_metadata = new_data
+            # Update metadata with original name and directory
+            self.project_metadata = {
+                'name': new_data['name'],  # Keep original name with special characters
+                'artist': new_data['artist'],
+                'audio_file': new_data['audio_file'],
+                'lyrics_file': new_data['lyrics_file'],
+            }
                 
             # Save metadata
             with open(Path(self.current_project_dir) / "metadata.json", 'w', encoding='utf-8') as f:
@@ -1465,7 +1484,7 @@ class KaraokeEditorMainWindow(QMainWindow):
             
         # Disable process button while running
         for button in self.findChildren(QPushButton):
-            if button.text() == "Process Project":
+            if button.text() == "Align Audio":
                 button.setEnabled(False)
                 break
                 
@@ -1480,7 +1499,7 @@ class KaraokeEditorMainWindow(QMainWindow):
         """Handle successful completion of processing"""
         # Re-enable process button
         for button in self.findChildren(QPushButton):
-            if button.text() == "Process Project":
+            if button.text() == "Align Audio":
                 button.setEnabled(True)
                 break
                 
@@ -1490,7 +1509,7 @@ class KaraokeEditorMainWindow(QMainWindow):
         """Handle successful completion of processing"""
         # Re-enable process button
         for button in self.findChildren(QPushButton):
-            if button.text() == "Process Project":
+            if button.text() == "Align Audio":
                 button.setEnabled(True)
                 break
                 
@@ -1506,7 +1525,7 @@ class KaraokeEditorMainWindow(QMainWindow):
         """Handle processing error"""
         # Re-enable process button
         for button in self.findChildren(QPushButton):
-            if button.text() == "Process Project":
+            if button.text() == "Align Audio":
                 button.setEnabled(True)
                 break
                 

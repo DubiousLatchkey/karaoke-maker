@@ -11,7 +11,6 @@ import gc
 import nltk
 from nltk.metrics.distance import edit_distance
 import heapq
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -265,7 +264,7 @@ class LyricsAligner:
         word_count = 0
         
         for line_idx, line in enumerate(lines):
-            line_tokens = re.findall(r"[a-z'\-]+", line.lower())
+            line_tokens = re.findall(r"[\(\)a-z'\-]+", line.lower())
             print(line_idx, "|", line_tokens)
             if line_tokens:  # Skip empty lines
                 # The last word of this line will be at index (word_count + len(line_tokens) - 1)
@@ -275,7 +274,7 @@ class LyricsAligner:
                 word_count += len(line_tokens)
         
         # Tokenize lyrics into words
-        lyrics_tokens = re.findall(r"[a-z'\-]+", lyrics.lower())
+        lyrics_tokens = re.findall(r"[\(\)a-z'\-]+", lyrics.lower())
         print(f"Lyrics tokens preview: {lyrics_tokens[:10]}")
         print(f"Lyrics tokens: {len(lyrics_tokens)}")
         print(f"Line breaks at word indices: {sorted(line_end_indices)}")

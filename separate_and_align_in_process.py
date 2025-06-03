@@ -5,14 +5,8 @@ from pathlib import Path
 import dotenv
 dotenv.load_dotenv(dotenv_path='.env')
 
-# Load font configurations from environment variables
-FONT_NAME = os.getenv('FONT_NAME', 'Cascadia-Mono-Regular')
-FONT_COLOR_ACTIVE = os.getenv('FONT_COLOR_ACTIVE', 'yellow')
-FONT_COLOR_INACTIVE = os.getenv('FONT_COLOR_INACTIVE', 'white')
-FONT_KERNING = int(os.getenv('FONT_KERNING', '1'))
-
-def _video_generation_worker(pipe, instrumental_path, alignment_path, output_name, output_dir, resolution, use_wipe, song_title, artist):
-    """Worker process for video generation"""
+def _separation_alignment_worker(pipe, input_dir, output_dir):
+    """Worker process for audio separation and alignment"""
     try:
         # Set working directory to the script's directory
         os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -20,13 +14,9 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
         # Reload environment variables
         dotenv.load_dotenv(dotenv_path='.env')
         
-        from video_generator import KaraokeVideoGenerator
+        from main import run_process_mode
         
         # Override print function to send through pipe
-        def progress_callback(msg):
-            pipe.send(('progress', msg))
-            
-        # Monkey patch print function
         import builtins
         original_print = builtins.print
         def custom_print(*args, **kwargs):
@@ -36,18 +26,8 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
         builtins.print = custom_print
         
         try:
-            # Initialize video generator
-            generator = KaraokeVideoGenerator(output_dir, resolution)
-            
-            # Generate video with metadata
-            result = generator.generate(
-                instrumental_path, 
-                alignment_path, 
-                output_name, 
-                use_wipe,
-                song_title=song_title,
-                artist=artist
-            )
+            # Run audio separation and alignment
+            result = run_process_mode(input_dir, output_dir)
             
             # Send success result
             pipe.send(('finished', result))
@@ -62,31 +42,25 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
     finally:
         pipe.close()
 
-def generate_video_in_process(instrumental_path, alignment_path, output_name, output_dir, resolution="1280x720", use_wipe=True, progress_callback=None, song_title=None, artist=None):
+def separate_and_align_in_process(input_dir, output_dir, progress_callback=None):
     """
-    Generate video in a separate process with progress updates
+    Run audio separation and alignment in a separate process with progress updates
     
     Args:
-        instrumental_path (str): Path to instrumental audio
-        alignment_path (str): Path to alignment JSON
-        output_name (str): Name for output video
-        output_dir (str): Directory for output
-        resolution (str): Video resolution
-        use_wipe (bool): Whether to use wipe transitions
+        input_dir (str): Directory containing input audio files
+        output_dir (str): Directory for output files
         progress_callback (callable): Function to call with progress updates
-        song_title (str): Title of the song for intro
-        artist (str): Artist name for intro
         
     Returns:
-        str: Path to generated video file
+        dict: Results from audio separation and alignment
     """
     # Create pipe for communication
     parent_conn, child_conn = multiprocessing.Pipe()
     
     # Create and start process
     process = multiprocessing.Process(
-        target=_video_generation_worker,
-        args=(child_conn, instrumental_path, alignment_path, output_name, output_dir, resolution, use_wipe, song_title, artist)
+        target=_separation_alignment_worker,
+        args=(child_conn, input_dir, output_dir)
     )
     process.start()
     

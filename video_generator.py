@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 import dotenv
+import aubio
 dotenv.load_dotenv(dotenv_path='.env')
 
 # Load font configurations from environment variables
@@ -91,11 +92,34 @@ class KaraokeVideoGenerator:
             
         print(f"Loaded {len(alignment_data)} word alignments")
         
-        # Load audio
+        # Load audio and detect BPM
         print(f"Loading audio from: {instrumental_path}")
         audio = AudioFileClip(instrumental_path)
         duration = audio.duration
         print(f"Audio duration: {duration:.2f} seconds")
+        
+        # Detect BPM and beats using aubio
+        print("Detecting beats...")
+        src = aubio.source(instrumental_path, hop_size=256)
+        tempo = aubio.tempo('default', 512, 256, src.samplerate)
+        beat_times = []
+        current_frame = 0
+        
+        while True:
+            samples, read = src()
+            if read == 0:
+                break
+                
+            is_beat = tempo(samples)
+            if is_beat:
+                beat_time = current_frame * 256 / src.samplerate
+                beat_times.append(beat_time)
+                
+            current_frame += 1
+            
+        detected_tempo = tempo.get_bpm()
+        print(f"Detected BPM: {detected_tempo:.1f}")
+        print(f"Found {len(beat_times)} beats")
         
         # Group words into lines based on line_end markers
         lines = self._group_words_into_lines(alignment_data)
@@ -143,8 +167,59 @@ class KaraokeVideoGenerator:
                     break_clip = break_clip.fadein(1).fadeout(1)
                     line_clips.append(break_clip)
                     print(f"Added break message: {break_text}")
+                    
+                    # Add count-in dots if gap is long enough for count-in
+                    if gap_duration > 10:  # Changed from 3 * beat_duration since we'll use actual beats
+                        # Find the last 8 beats before the next section starts
+                        next_section_start = lines[i + 1]['start']
+                        # Filter out beats that are too close to the next section start
+                        BEAT_THRESHOLD = 0.075  # Ignore beats within 75ms of section start
+                        count_in_beats = [t for t in beat_times if t < next_section_start - BEAT_THRESHOLD][-8:]
+                        
+                        if len(count_in_beats) >= 8:
+                            count_in_y = self.y_top - int(80 * self.scale_factor)  # Position above the top line
+                            
+                            # Create dots that appear on beats 8, 6, and 4, each lasting 2 beats
+                            for i, dot_count in enumerate([8, 6, 4]):
+                                beat_time = count_in_beats[-dot_count]
+                                dots = "*" * ((dot_count // 2 - 1))  # 4, 3, 2 stars
+                                
+                                # Each set of dots lasts for 2 beats
+                                next_dot_time = count_in_beats[-(dot_count-2)]  # Time of next set
+                                duration = next_dot_time - beat_time
+                                
+                                dot_clip = TextClip(
+                                    dots,
+                                    fontsize=self.font_size,
+                                    color=FONT_COLOR_INACTIVE,
+                                    font=FONT_NAME,
+                                    kerning=FONT_KERNING,
+                                    stroke_color=FONT_COLOR_INACTIVE,
+                                    stroke_width=self.stroke_width
+                                ).set_start(beat_time).set_duration(duration).set_position(('center', count_in_y))
+                                line_clips.append(dot_clip)
+                                print(f"Added count-in dot {dot_count//2} at {beat_time:.2f}s (duration: {duration:.2f}s)")
         
         print(f"Created {len(line_clips)} positioned line clips")
+
+        # Handle outro if there's a significant gap after the last line
+        if lines:
+            last_line_end = lines[-1]['end']
+            outro_duration = duration - last_line_end
+            if outro_duration > 10:
+                outro_text = f"[{int(outro_duration)} second outro]"
+                outro_clip = TextClip(
+                    outro_text,
+                    fontsize=self.font_size,
+                    color=FONT_COLOR_INACTIVE,
+                    font=FONT_NAME,
+                    kerning=FONT_KERNING,
+                    stroke_color=FONT_COLOR_INACTIVE,
+                    stroke_width=self.stroke_width
+                ).set_start(last_line_end + 2).set_duration(outro_duration - 2).set_position(('center', 'center'))
+                outro_clip = outro_clip.fadein(1).fadeout(1)
+                line_clips.append(outro_clip)
+                print(f"Added outro message: {outro_text}")
 
         # Handle intro based on timing of first line
         first_line_start = lines[0]['start'] if lines else 0
@@ -186,7 +261,7 @@ class KaraokeVideoGenerator:
         # Combine all clips
         mode_name = "wipe" if use_wipe else "karaoke"
         print(f"Compositing {mode_name} video...")
-        final_video = CompositeVideoClip([background] + line_clips)
+        final_video = CompositeVideoClip([background] + line_clips, use_bgclip=True)
 
         if intro_clips:
             intro_video = CompositeVideoClip([ColorClip(size=self.resolution, color=(0, 0, 0), duration=5)] + intro_clips)
@@ -196,8 +271,12 @@ class KaraokeVideoGenerator:
         # Add audio
         final_video = final_video.set_audio(audio)
         
+        # Sanitize output filename
+        sanitized_name = "".join(c for c in output_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        sanitized_name = sanitized_name.replace(' ', '_')
+        
         # Write output file
-        output_path = os.path.join(self.output_dir, f"{output_name}.mp4")
+        output_path = os.path.join(self.output_dir, f"{sanitized_name}.mp4")
         print(f"Writing {mode_name} video to: {output_path}")
         
         final_video.write_videofile(
@@ -206,7 +285,9 @@ class KaraokeVideoGenerator:
             codec='libx264',
             audio_codec='aac',
             verbose=False,
-            logger="bar"
+            logger="bar",
+            threads=4,
+            preset="ultrafast"
         )
         
         # Clean up

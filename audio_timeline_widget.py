@@ -37,6 +37,7 @@ class AudioTimelineWidget(QWidget):
         self.drag_start_word_data = None  # Original word data at drag start
         self.hover_word_index = -1  # Index of word being hovered over
         self.resize_threshold = 5  # Pixels from edge to trigger resize cursor
+        self.is_dragging_for_seek = False  # Flag to track if we're dragging for seeking
         
         # Visual settings
         self.timeline_height = 200  # Increased height for multiple tracks
@@ -569,6 +570,10 @@ class AudioTimelineWidget(QWidget):
                 timeline_rect = QRect(10, 10, widget_rect.width() - 20, self.timeline_height)
                 
                 if timeline_rect.contains(event.pos()) and self.audio_length > 0:
+                    # Start dragging for seek
+                    self.is_dragging_for_seek = True
+                    self.setCursor(Qt.CursorShape.CrossCursor)
+                    
                     # Calculate clicked time position for seeking
                     relative_x = event.pos().x() - timeline_rect.x()
                     pixels_per_second = timeline_rect.width() / self.zoom_level
@@ -600,7 +605,35 @@ class AudioTimelineWidget(QWidget):
         """Handle mouse move for word editing and cursor updates"""
         mouse_x, mouse_y = event.pos().x(), event.pos().y()
         
-        if self.drag_mode and self.drag_start_pos:
+        if self.is_dragging_for_seek:
+            # Handle seeking by dragging
+            widget_rect = self.rect()
+            timeline_rect = QRect(10, 10, widget_rect.width() - 20, self.timeline_height)
+            
+            if timeline_rect.contains(event.pos()) and self.audio_length > 0:
+                # Calculate time position for seeking
+                relative_x = event.pos().x() - timeline_rect.x()
+                pixels_per_second = timeline_rect.width() / self.zoom_level
+                seek_time = self.scroll_position + (relative_x / pixels_per_second)
+                
+                # Apply snap-to-grid based on zoom level
+                if self.zoom_level <= 10:  # When zoomed in close
+                    snap_interval = 0.01  # Snap to 10ms intervals
+                elif self.zoom_level <= 30:
+                    snap_interval = 0.1  # Snap to 100ms intervals
+                else:
+                    snap_interval = 1.0  # Snap to 1s intervals
+                
+                # Calculate snapped position
+                snapped_time = round(seek_time / snap_interval) * snap_interval
+                
+                # Clamp to valid range
+                snapped_time = max(0, min(snapped_time, self.audio_length))
+                
+                # Emit position change signal
+                self.position_changed.emit(snapped_time)
+                
+        elif self.drag_mode and self.drag_start_pos:
             # Currently dragging a word
             widget_rect = self.rect()
             timeline_rect = QRect(10, 10, widget_rect.width() - 20, self.timeline_height)
@@ -670,6 +703,10 @@ class AudioTimelineWidget(QWidget):
                 self.drag_mode = None
                 self.drag_start_pos = None
                 self.drag_start_word_data = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            elif self.is_dragging_for_seek:
+                # End seeking drag
+                self.is_dragging_for_seek = False
                 self.setCursor(Qt.CursorShape.ArrowCursor)
         
         super().mouseReleaseEvent(event)
