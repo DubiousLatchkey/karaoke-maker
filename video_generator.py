@@ -224,6 +224,19 @@ class KaraokeVideoGenerator:
         # Handle intro based on timing of first line
         first_line_start = lines[0]['start'] if lines else 0
         intro_clips = []
+
+        # Process song title and artist to add newlines if needed
+        if len(song_title) > 35:
+            # Split on space closest to 35 chars
+            split_index = song_title.rfind(' ', 0, 35)
+            if split_index != -1:
+                song_title = song_title[:split_index] + '\n' + song_title[split_index+1:]
+        
+        if artist and len(artist) > 35:
+            # Split on space closest to 35 chars
+            split_index = artist.rfind(' ', 0, 35)
+            if split_index != -1:
+                artist = artist[:split_index] + '\n' + artist[split_index+1:]
         
         if first_line_start >= 5:
             # Create intro clip to be composited with the main video
@@ -240,8 +253,8 @@ class KaraokeVideoGenerator:
             ).set_duration(first_line_start - 1).set_position(('center', 'center'))
             intro_clip = intro_clip.fadein(1).fadeout(1)
             line_clips.append(intro_clip)
-            print(f"Added intro title during musical intro")
         else:
+            print(f"Added intro title during musical intro")
             # Create separate 5-second intro clip
             intro_text = f"{song_title}\n{artist}" if artist else song_title
             intro_clip = TextClip(

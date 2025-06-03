@@ -68,7 +68,7 @@ def viterbi_many_to_one_alignment(asr_tokens, lyrics_tokens, k=3):
                 lyrics_segment = lyrics_tokens[j]  # Just a single lyrics token
                 
                 # Calculate Levenshtein distance as a cost
-                distance = edit_distance(asr_segment.lower(), lyrics_segment.lower())
+                distance = edit_distance(asr_segment.lower(), lyrics_segment.lower().replace("(", "").replace(")", ""))
                 
                 # Normalize by max length to get a fairer comparison across different segment sizes
                 max_len = max(len(asr_segment), len(lyrics_segment))
@@ -160,6 +160,61 @@ def viterbi_many_to_one_alignment(asr_tokens, lyrics_tokens, k=3):
     
     print(f"Alignment complete. Found {len(alignment)} mappings.")
     return alignment
+
+def tokenize_lyrics(lyrics):
+    """
+    Tokenize lyrics into words, handling dashes and parentheses properly.
+    
+    Args:
+        lyrics (str): The lyrics text to tokenize
+        
+    Returns:
+        list: List of tokens, with dashes removed and parentheses merged with adjacent words
+    """
+    # First split into lines to preserve line structure
+    lines = lyrics.split('\n')
+    all_tokens = []
+    
+    for line in lines:
+        # Find all tokens including parentheses and dashes
+        tokens = re.findall(r"[\(\)a-z'\-]+", line.lower())
+        
+        # Process tokens to handle dashes and parentheses
+        processed_tokens = []
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            
+            # Skip standalone dashes
+            if token == '-':
+                i += 1
+                continue
+                
+            # Handle parentheses
+            if token.startswith('(') or token.endswith(')'):
+                # If this is a standalone parenthesis, merge with next/prev token
+                if token == '(' and i + 1 < len(tokens):
+                    # Merge with next token
+                    next_token = tokens[i + 1]
+                    processed_tokens.append(f"({next_token}")
+                    i += 2
+                elif token == ')' and processed_tokens:
+                    # Merge with previous token
+                    prev_token = processed_tokens.pop()
+                    processed_tokens.append(f"{prev_token})")
+                    i += 1
+                else:
+                    # Keep as is if it's part of a word
+                    processed_tokens.append(token)
+                    i += 1
+            else:
+                # Regular token, just add it
+                processed_tokens.append(token)
+                i += 1
+        
+        all_tokens.extend(processed_tokens)
+    
+    return all_tokens
 
 class LyricsAligner:
     def __init__(self, output_dir):
@@ -264,7 +319,7 @@ class LyricsAligner:
         word_count = 0
         
         for line_idx, line in enumerate(lines):
-            line_tokens = re.findall(r"[\(\)a-z'\-]+", line.lower())
+            line_tokens = tokenize_lyrics(line)
             print(line_idx, "|", line_tokens)
             if line_tokens:  # Skip empty lines
                 # The last word of this line will be at index (word_count + len(line_tokens) - 1)
@@ -273,8 +328,8 @@ class LyricsAligner:
                 #print(f"Line {line_idx + 1}: '{line.strip()[:20]}...' ends at word index {line_end_idx}")
                 word_count += len(line_tokens)
         
-        # Tokenize lyrics into words
-        lyrics_tokens = re.findall(r"[\(\)a-z'\-]+", lyrics.lower())
+        # Tokenize lyrics into words using the new function
+        lyrics_tokens = tokenize_lyrics(lyrics)
         print(f"Lyrics tokens preview: {lyrics_tokens[:10]}")
         print(f"Lyrics tokens: {len(lyrics_tokens)}")
         print(f"Line breaks at word indices: {sorted(line_end_indices)}")
