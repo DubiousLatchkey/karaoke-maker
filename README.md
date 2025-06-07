@@ -8,44 +8,13 @@ This Python project automatically generates karaoke videos from audio files and 
 
 ## Requirements
 
-- Python 3.8 or higher
-- FFmpeg installed on your system
-- Required Python packages (install using `pip install -r requirements.txt`)
-
-## Project Structure
-
-- `main.py`: Main orchestration script
-- `audio_separation.py`: Handles vocal/instrumental separation
-- `forced_alignment.py`: Manages lyrics alignment with audio
-- `video_generator.py`: Creates the final karaoke video
+- Python 3.12 (Maybe other versions work but I haven't tested them)
+- FFmpeg and Imagemagick installed on your system (may have to set paths LD_LIBRARY_PATH and IMAGEMAGICK_BINARY in env variables)
+- Required Python packages (install using `pip install -r requirements.txt`).  Yeah they conflict.  Yeah it works.  Don't ask, just get them all installed.
+- Download torch and torchaudio with the website (pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126) for gpu
+- Probably something else I'm missing
 
 ## Usage
 
-1. Place your audio file and lyrics text file in the input directory
-2. Run the main script:
-   ```bash
-   python main.py --input_dir /path/to/input --output_dir /path/to/output
-   ```
-
-## Input Format
-
-- Audio file: Supported formats include MP3, WAV, FLAC
-- Lyrics file: Plain text file with one line per lyric line
-
-## Output
-
-The program will generate:
-- Separated vocal and instrumental tracks
-- A karaoke video with timed lyrics
-
-
-Download torch and torchaudio with the website (pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126) for gpu
-
-Use this env variable to make sure whisperx can access stuff export LD_LIBRARY_PATH=/{absolute path to venv}/lib/python3.XX/site-packages/nvidia/cudnn/lib/
-
-
-Needs imagemagick and ffmpeg
-
-Needs sounddevice and soundfile
-
-On windows: set IMAGEMAGICK_BINARY in .env
+- Some of the scripts have ways to run them individually.  Otherwise, use `python karaoke_gui.py`
+- Yeah I tried to make an executable.  No it didn't work.  Something about whisperx and pyinstaller idk

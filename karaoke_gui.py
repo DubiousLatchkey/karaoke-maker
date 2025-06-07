@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                              QWidget, QPushButton, QFileDialog, QLabel, QSlider, 
                              QListWidget, QListWidgetItem, QSplitter, QTextEdit,
                              QProgressBar, QFrame, QSpacerItem, QSizePolicy, QDoubleSpinBox,
-                             QCheckBox, QDialog, QLineEdit, QDialogButtonBox)
+                             QCheckBox, QDialog, QLineEdit, QDialogButtonBox, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt6.QtGui import QFont, QIcon, QKeySequence
 import sounddevice as sd
@@ -46,6 +46,25 @@ class ProjectPropertiesDialog(QDialog):
         self.artist_edit.setText(self.project_data.get('artist', ''))
         artist_layout.addWidget(self.artist_edit)
         layout.addLayout(artist_layout)
+        
+        # Export resolution
+        resolution_layout = QHBoxLayout()
+        resolution_layout.addWidget(QLabel("Export Resolution:"))
+        self.resolution_combo = QComboBox()
+        self.resolution_combo.addItems(['360', '480', '720', '1080'])
+        self.resolution_combo.setEditable(True)  # Allow custom values
+        
+        # Set current resolution from project data
+        current_resolution = str(self.project_data.get('resolution', '360'))
+        index = self.resolution_combo.findText(current_resolution)
+        if index >= 0:
+            self.resolution_combo.setCurrentIndex(index)
+        else:
+            self.resolution_combo.setCurrentText(current_resolution)
+            
+        resolution_layout.addWidget(self.resolution_combo)
+        resolution_layout.addWidget(QLabel("(height in pixels)"))
+        layout.addLayout(resolution_layout)
         
         # Audio file
         audio_layout = QHBoxLayout()
@@ -110,6 +129,7 @@ class ProjectPropertiesDialog(QDialog):
         return {
             'name': self.name_edit.text().strip(),
             'artist': self.artist_edit.text().strip(),
+            'resolution': self.resolution_combo.currentText().strip(),
             'audio_file': self.audio_path_edit.text(),
             'lyrics_file': self.lyrics_path_edit.text()
         }
@@ -944,6 +964,7 @@ class KaraokeEditorMainWindow(QMainWindow):
         self.project_metadata = {
             'name': '',
             'artist': '',
+            'resolution': '360',
             'audio_file': '',
             'lyrics_file': ''
         }
@@ -1114,11 +1135,17 @@ class KaraokeEditorMainWindow(QMainWindow):
             try:
                 with open(metadata_file, 'r', encoding='utf-8') as f:
                     self.project_metadata = json.load(f)
+                    
+                # Ensure resolution field exists with default value
+                if 'resolution' not in self.project_metadata:
+                    self.project_metadata['resolution'] = '360'
+                    
             except Exception as e:
                 print(f"Error loading metadata: {e}")
                 self.project_metadata = {
                     'name': '',
                     'artist': '',
+                    'resolution': '360',
                     'audio_file': '',
                     'lyrics_file': ''
                 }
@@ -1406,6 +1433,7 @@ class KaraokeEditorMainWindow(QMainWindow):
             self.project_metadata = {
                 'name': project_data['name'],
                 'artist': project_data['artist'],
+                'resolution': project_data['resolution'],
                 'audio_file': str(project_dir / f"song{audio_ext}"),
                 'lyrics_file': str(project_dir / "lyrics.txt")
             }
@@ -1464,6 +1492,7 @@ class KaraokeEditorMainWindow(QMainWindow):
             self.project_metadata = {
                 'name': new_data['name'],  # Keep original name with special characters
                 'artist': new_data['artist'],
+                'resolution': new_data.get('resolution', '360'),
                 'audio_file': new_data['audio_file'],
                 'lyrics_file': new_data['lyrics_file'],
             }
@@ -1566,10 +1595,11 @@ class KaraokeEditorMainWindow(QMainWindow):
                 button.setEnabled(False)
                 break
                 
-        # Get output name and metadata
+        # Get output name, metadata, and resolution
         output_name = self.project_metadata['name'] if self.project_metadata['name'] else project_path.name
         song_title = self.project_metadata.get('name', '')
         artist = self.project_metadata.get('artist', '')
+        resolution = self.project_metadata.get('resolution', '360')
         
         # Create and start export thread
         self.export_thread = VideoExportThread(
@@ -1577,7 +1607,7 @@ class KaraokeEditorMainWindow(QMainWindow):
             alignment_path,
             output_name,
             str(project_path),
-            resolution="360",
+            resolution=resolution,
             use_wipe=True,
             song_title=song_title,
             artist=artist
