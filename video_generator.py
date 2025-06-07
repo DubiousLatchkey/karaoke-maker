@@ -205,7 +205,7 @@ class KaraokeVideoGenerator:
         # Handle outro if there's a significant gap after the last line
         if lines:
             last_line_end = lines[-1]['end']
-            outro_duration = duration - last_line_end
+            outro_duration = audio.duration - last_line_end
             if outro_duration > 10:
                 outro_text = f"[{int(outro_duration)} second outro]"
                 outro_clip = TextClip(
@@ -275,14 +275,14 @@ class KaraokeVideoGenerator:
         mode_name = "wipe" if use_wipe else "karaoke"
         print(f"Compositing {mode_name} video...")
         final_video = CompositeVideoClip([background] + line_clips, use_bgclip=True)
+        
+        # Add audio
+        final_video = final_video.set_audio(audio)
 
         if intro_clips:
             intro_video = CompositeVideoClip([ColorClip(size=self.resolution, color=(0, 0, 0), duration=5)] + intro_clips)
             final_video = concatenate_videoclips([intro_video, final_video])
         
-        
-        # Add audio
-        final_video = final_video.set_audio(audio)
         
         # Sanitize output filename
         sanitized_name = "".join(c for c in output_name if c.isalnum() or c in (' ', '-', '_')).strip()
