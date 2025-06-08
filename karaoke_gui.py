@@ -16,6 +16,7 @@ import threading
 import time
 from audio_timeline_widget import AudioTimelineWidget
 import shutil
+import subtitle_generator
 
 class ProjectPropertiesDialog(QDialog):
     """Dialog for creating or editing project properties"""
@@ -1021,6 +1022,10 @@ class KaraokeEditorMainWindow(QMainWindow):
         export_button.clicked.connect(self.export_video)
         project_layout.addWidget(export_button)
         
+        export_subtitles_button = QPushButton("Export Subtitles")
+        export_subtitles_button.clicked.connect(self.export_subtitles)
+        project_layout.addWidget(export_subtitles_button)
+        
         project_layout.addStretch()
         main_layout.addLayout(project_layout)
         
@@ -1636,6 +1641,33 @@ class KaraokeEditorMainWindow(QMainWindow):
                 break
                 
         self.statusBar().showMessage(f"Error: {error_msg}")
+
+    def export_subtitles(self):
+        """Export subtitles in TTML format"""
+        if not self.current_project_dir:
+            self.statusBar().showMessage("No project loaded to export subtitles from")
+            return
+            
+        try:
+            # Get project metadata for song title and artist
+            song_title = self.project_metadata.get('name', '')
+            artist = self.project_metadata.get('artist', '')
+            
+            # Export subtitles using the subtitle_generator module
+            success = subtitle_generator.export_subtitle_from_project(
+                self.current_project_dir,
+                song_title,
+                artist,
+                False
+            )
+            
+            if success:
+                self.statusBar().showMessage("Subtitles exported successfully")
+            else:
+                self.statusBar().showMessage("Error: Failed to export subtitles")
+                
+        except Exception as e:
+            self.statusBar().showMessage(f"Error exporting subtitles: {e}")
 
 def main():
     """Main entry point for the GUI application"""

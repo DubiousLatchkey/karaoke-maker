@@ -1,4 +1,4 @@
-#whisperx
+whisperx
 numpy
 demucs
 moviepy==1.0.3
