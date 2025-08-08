@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                              QProgressBar, QFrame, QSpacerItem, QSizePolicy, QDoubleSpinBox,
                              QCheckBox, QDialog, QLineEdit, QDialogButtonBox, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
-from PyQt6.QtGui import QFont, QIcon, QKeySequence
+from PyQt6.QtGui import QFont, QIcon, QKeySequence, QFontDatabase
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
@@ -17,6 +17,12 @@ import time
 from audio_timeline_widget import AudioTimelineWidget
 import shutil
 import subtitle_generator
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+    print("Warning: pydub not available. m4a and other formats may not work.")
 
 class ProjectPropertiesDialog(QDialog):
     """Dialog for creating or editing project properties"""
@@ -154,8 +160,36 @@ class AudioPlayer:
         """Load an audio file"""
         try:
             self.audio_file = file_path
-            # Load audio using soundfile
-            self.audio_data, self.sample_rate = sf.read(file_path)
+            
+            # First try soundfile (works for wav, flac, etc.)
+            try:
+                self.audio_data, self.sample_rate = sf.read(file_path)
+                print(f"Loaded with soundfile: {file_path}")
+            except Exception as sf_error:
+                print(f"Soundfile failed: {sf_error}")
+                
+                # Fallback to pydub for m4a and other formats
+                if not PYDUB_AVAILABLE:
+                    raise Exception("pydub is required for this audio format but is not installed")
+                
+                print(f"Trying pydub fallback for: {file_path}")
+                
+                # Load with pydub
+                audio = AudioSegment.from_file(file_path)
+                
+                # Convert to numpy array
+                # AudioSegment stores audio as int16, convert to float32 for consistency
+                self.audio_data = np.array(audio.get_array_of_samples(), dtype=np.float32)
+                
+                # Normalize from int16 range to float range
+                self.audio_data = self.audio_data / 32768.0
+                
+                # Handle stereo
+                if audio.channels == 2:
+                    self.audio_data = self.audio_data.reshape((-1, 2))
+                
+                self.sample_rate = audio.frame_rate
+                print(f"Loaded with pydub: {file_path}")
             
             # Convert to stereo if mono
             if len(self.audio_data.shape) == 1:
@@ -175,7 +209,7 @@ class AudioPlayer:
             audio_slice = self.audio_data[start_sample:]
             
             # Play the audio slice
-            sd.play(audio_slice, self.sample_rate)
+            sd.play(audio_slice, self.sample_rate, latency='low')
             
             # Wait for playback to finish or stop event
             while sd.get_stream().active and not self.stop_event.is_set():
@@ -518,7 +552,6 @@ class WordDetailsEditor(QWidget):
         layout.addStretch()
         
         self.setLayout(layout)
-        self.setEnabled(False)  # Disabled until a word is selected
         
     def set_word(self, word_data):
         """Set the current word data for editing"""
@@ -824,17 +857,66 @@ class WordOperationsWidget(QWidget):
         
         operations_frame.setLayout(operations_layout)
         layout.addWidget(operations_frame)
+
+        # Rendering settings section under Word Operations
+        export_frame = QFrame()
+        export_frame.setFrameStyle(QFrame.Shape.Box)
+        export_frame.setStyleSheet("QFrame { border: 1px solid #ccc; border-radius: 5px; padding: 10px; }")
+        export_layout = QVBoxLayout()
+
+        export_title = QLabel("Rendering Settings")
+        export_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        export_layout.addWidget(export_title)
+
+        # Renderer selection
+        renderer_row = QHBoxLayout()
+        renderer_row.addWidget(QLabel("Renderer:"))
+        self.renderer_combo = QComboBox()
+        self.renderer_combo.addItem("MoviePy (CPU)", userData="moviepy")
+        self.renderer_combo.addItem("ASS + FFmpeg (NVENC)", userData="ass")
+        self.renderer_combo.setCurrentIndex(1)  # default to fast NVENC path
+        renderer_row.addWidget(self.renderer_combo)
+        renderer_row.addStretch()
+        export_layout.addLayout(renderer_row)
+
+        # Font selection (system fonts)
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("Font:"))
+        self.font_combo = QComboBox()
+        # Populate with system fonts
+        system_fonts = QFontDatabase.families()
+        for family in system_fonts:
+            self.font_combo.addItem(family)
+        # Try to set to current env FONT_NAME if present
+        from os import getenv
+        # Prefer Cascadia Mono if available; fallback to env FONT_NAME; else leave default
+        preferred = ["Cascadia Mono", "Cascadia-Mono-Regular", getenv('FONT_NAME', '')]
+        for pref in preferred:
+            if pref:
+                idx = self.font_combo.findText(pref)
+                if idx >= 0:
+                    self.font_combo.setCurrentIndex(idx)
+                    break
+        font_row.addWidget(self.font_combo)
+        font_row.addStretch()
+        export_layout.addLayout(font_row)
+
+        export_frame.setLayout(export_layout)
+        layout.addWidget(export_frame)
         
         # Spacer to push everything to top
         layout.addStretch()
         
         self.setLayout(layout)
-        self.setEnabled(False)  # Disabled until a word is selected
         
     def set_word(self, word_data):
-        """Set the current word data"""
+        """Set the current word data and update button states. Keep export settings always enabled."""
         self.current_word = word_data
-        self.setEnabled(word_data is not None)
+        has_selection = word_data is not None
+        if hasattr(self, 'duplicate_word_btn'):
+            self.duplicate_word_btn.setEnabled(has_selection)
+        if hasattr(self, 'delete_word_btn'):
+            self.delete_word_btn.setEnabled(has_selection)
         
     def add_new_word(self):
         """Add a new word at the current playhead position"""
@@ -885,6 +967,19 @@ class WordOperationsWidget(QWidget):
             
         self.word_deleted.emit(self.current_word)
 
+    def get_renderer_choice(self) -> str:
+        """Return the selected renderer key ('moviepy' or 'ass')."""
+        if hasattr(self, 'renderer_combo'):
+            data = self.renderer_combo.currentData()
+            return data if isinstance(data, str) else 'moviepy'
+        return 'moviepy'
+
+    def get_font_choice(self) -> str:
+        """Return the selected font family name (or empty string)."""
+        if hasattr(self, 'font_combo'):
+            return self.font_combo.currentText().strip()
+        return ''
+
 class ProcessThread(QThread):
     """Thread for running the karaoke processing steps"""
     progress = pyqtSignal(str)  # Progress message
@@ -919,7 +1014,7 @@ class VideoExportThread(QThread):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
     
-    def __init__(self, instrumental_path, alignment_path, output_name, output_dir, resolution="1280x720", use_wipe=True, song_title=None, artist=None):
+    def __init__(self, instrumental_path, alignment_path, output_name, output_dir, resolution="1280x720", use_wipe=True, song_title=None, artist=None, renderer="moviepy"):
         super().__init__()
         self.instrumental_path = instrumental_path
         self.alignment_path = alignment_path
@@ -929,6 +1024,7 @@ class VideoExportThread(QThread):
         self.use_wipe = use_wipe
         self.song_title = song_title
         self.artist = artist
+        self.renderer = renderer
         
     def run(self):
         try:
@@ -944,7 +1040,8 @@ class VideoExportThread(QThread):
                 self.use_wipe,
                 progress_callback=self.progress.emit,
                 song_title=self.song_title,
-                artist=self.artist
+                artist=self.artist,
+                renderer=self.renderer
             )
             
             if result:
@@ -1607,6 +1704,19 @@ class KaraokeEditorMainWindow(QMainWindow):
         resolution = self.project_metadata.get('resolution', '360')
         
         # Create and start export thread
+        # Renderer selection from Export Settings (Word Operations panel)
+        selected_renderer = 'moviepy'
+        selected_font = None
+        if hasattr(self, 'word_operations'):
+            if hasattr(self.word_operations, 'get_renderer_choice'):
+                selected_renderer = self.word_operations.get_renderer_choice()
+            if hasattr(self.word_operations, 'get_font_choice'):
+                selected_font = self.word_operations.get_font_choice()
+
+        # If font chosen, export it to environment for renderer processes
+        if selected_font:
+            os.environ['FONT_NAME'] = selected_font
+
         self.export_thread = VideoExportThread(
             instrumental_path,
             alignment_path,
@@ -1615,7 +1725,8 @@ class KaraokeEditorMainWindow(QMainWindow):
             resolution=resolution,
             use_wipe=True,
             song_title=song_title,
-            artist=artist
+            artist=artist,
+            renderer=selected_renderer
         )
         self.export_thread.progress.connect(self.statusBar().showMessage)
         self.export_thread.finished.connect(self.on_export_finished)

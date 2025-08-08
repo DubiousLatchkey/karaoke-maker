@@ -11,7 +11,7 @@ FONT_COLOR_ACTIVE = os.getenv('FONT_COLOR_ACTIVE', 'yellow')
 FONT_COLOR_INACTIVE = os.getenv('FONT_COLOR_INACTIVE', 'white')
 FONT_KERNING = int(os.getenv('FONT_KERNING', '1'))
 
-def _video_generation_worker(pipe, instrumental_path, alignment_path, output_name, output_dir, resolution, use_wipe, song_title, artist):
+def _video_generation_worker(pipe, instrumental_path, alignment_path, output_name, output_dir, resolution, use_wipe, song_title, artist, renderer):
     """Worker process for video generation"""
     try:
         # Set working directory to the script's directory
@@ -20,7 +20,21 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
         # Reload environment variables
         dotenv.load_dotenv(dotenv_path='.env')
         
-        from video_generator import KaraokeVideoGenerator
+        # Choose renderer based on passed parameter (no automatic fallback)
+        renderer = (renderer or 'moviepy').lower()  # 'moviepy' or 'ass'
+        if renderer == 'ass':
+            pipe.send(('progress', 'Using ASS/NVENC renderer'))
+            try:
+                from ass_video_generator import KaraokeVideoGenerator
+            except Exception as e:
+                raise RuntimeError(f"Failed to load ASS renderer: {e}")
+        elif renderer == 'moviepy':
+            try:
+                from video_generator import KaraokeVideoGenerator
+            except Exception as e:
+                raise RuntimeError(f"Failed to load MoviePy renderer: {e}")
+        else:
+            raise ValueError(f"Unknown renderer '{renderer}'")
         
         # Override print function to send through pipe
         def progress_callback(msg):
@@ -31,7 +45,10 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
         original_print = builtins.print
         def custom_print(*args, **kwargs):
             msg = ' '.join(str(arg) for arg in args)
-            pipe.send(('progress', msg))
+            try:
+                pipe.send(('progress', msg))
+            except Exception:
+                pass
             original_print(*args, **kwargs)
         builtins.print = custom_print
         
@@ -40,6 +57,8 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
             generator = KaraokeVideoGenerator(output_dir, resolution)
             
             # Generate video with metadata
+            # Pass font selection via environment variable if provided through progress pipe
+            font_override = os.getenv('FONT_NAME', None)
             result = generator.generate(
                 instrumental_path, 
                 alignment_path, 
@@ -62,7 +81,7 @@ def _video_generation_worker(pipe, instrumental_path, alignment_path, output_nam
     finally:
         pipe.close()
 
-def generate_video_in_process(instrumental_path, alignment_path, output_name, output_dir, resolution="1280x720", use_wipe=True, progress_callback=None, song_title=None, artist=None):
+def generate_video_in_process(instrumental_path, alignment_path, output_name, output_dir, resolution="1280x720", use_wipe=True, progress_callback=None, song_title=None, artist=None, renderer='moviepy'):
     """
     Generate video in a separate process with progress updates
     
@@ -86,7 +105,7 @@ def generate_video_in_process(instrumental_path, alignment_path, output_name, ou
     # Create and start process
     process = multiprocessing.Process(
         target=_video_generation_worker,
-        args=(child_conn, instrumental_path, alignment_path, output_name, output_dir, resolution, use_wipe, song_title, artist)
+        args=(child_conn, instrumental_path, alignment_path, output_name, output_dir, resolution, use_wipe, song_title, artist, renderer)
     )
     process.start()
     
